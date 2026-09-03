@@ -1,0 +1,6 @@
+# Implementation stack per AI Handoff Section 13
+torch
+numpy
+opencv-python
+scikit-learn
+pyyaml

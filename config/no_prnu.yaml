@@ -1,0 +1,21 @@
+# Table row: "ELA + Content Model with Fusion"
+# Equivalent to the "Full Model WITHOUT PRNU" ablation (SOP 2).
+# Two branches -> 2-way attention fusion.
+
+model:
+  active_branches: [ela, content]
+  feature_dim: 128
+  classifier_hidden_dim: 64
+  dropout: 0.5
+  num_classes: 2
+
+branch_overrides: {}
+  # ela: {conv1_channels: 32, conv2_channels: 64, kernel_size: 3, stride: 1, padding: 1}
+  # content: {block_channels: [32, 64, 128], kernel_size: 3, stride: 1, padding: 1}
+
+training:
+  learning_rate: null
+  weight_decay: null
+  batch_size: null
+  epochs: null
+  lr_min: null
