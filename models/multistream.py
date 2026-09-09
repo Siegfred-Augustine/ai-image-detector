@@ -20,6 +20,13 @@ selects `active_branches` and this class builds the right thing:
 See ela_branch.py, prnu_branch.py, content_branch.py, attention.py, and
 classifier.py for what each piece does and which hyperparameters are
 implementation defaults vs. documented requirements.
+
+NOTE on the "prnu" input key: it is the RAW (minimally-preprocessed)
+image tensor, not a precomputed residual. PRNUBranch internally runs
+the learnable Hybrid Wavelet Layer (wavelet_layer.py) to derive the
+residual W = X - D on every forward pass, so gradients from the
+classification loss can flow back into the per-subband thresholds
+(Handoff Section 4 / Section 13). See prnu_branch.py's docstring.
 """
 
 from typing import Dict, Iterable, Optional

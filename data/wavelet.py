@@ -1,14 +1,33 @@
 """
 data/wavelet.py
 
-Wavelet-domain utilities, covering both uses implied by the thesis title
-("Wavelet-Enhanced Pixel-Wise Feature Fusion"):
+OFFLINE / EXPLORATORY wavelet-domain utilities -- built on NumPy + PyWavelets,
+NOT used by the main training pipeline.
 
-1. Wavelet denoising -> noise residual extraction, used as the PRNU-style
-   input to models/prnu_branch.py. True camera-PRNU reference patterns
-   aren't available for arbitrary web-sourced images, so we follow the
-   standard wavelet-based-denoising-filter approach (Lyu & Farid /
-   Lukas et al.) to estimate the sensor/generator noise residual instead.
+IMPORTANT: these functions do NOT power models/prnu_branch.py.
+The Handoff doc (Section 4) requires the PRNU residual to be computed by
+a *learnable* per-subband soft threshold with end-to-end gradient flow
+(Section 13), which means it has to live inside the network as a real
+nn.Module -- see models/wavelet_layer.py:HybridWaveletLayer, which
+implements the documented D4 / 1-level / learnable-threshold pipeline
+and is called directly by models/prnu_branch.py on every forward pass.
+data/dataset.py accordingly feeds PRNUBranch a raw (minimally
+preprocessed) image, not a residual from this file.
+
+What THIS file is still useful for:
+    - Offline visualization / EDA notebooks (e.g. "what does a fixed,
+      non-learned wavelet residual look like for this image?").
+    - A fixed-filter (db8, multi-level, universal-threshold) baseline
+      if the team ever wants to compare a classical, non-learned
+      residual against the learnable Hybrid Wavelet Layer's output.
+    - `wavelet_pixel_features`, which produces pixel-resolution detail
+      maps for exploratory pixel-wise fusion outside the main model.
+
+1. Wavelet denoising -> noise residual extraction: a classical (non-
+   learned) estimate of the sensor/generator noise residual, following
+   the standard wavelet-based-denoising-filter approach (Lyu & Farid /
+   Lukas et al.). True camera-PRNU reference patterns aren't available
+   for arbitrary web-sourced images, hence this residual-based proxy.
 2. Multi-level DWT detail maps, upsampled back to pixel resolution so
    they can be concatenated with the content stream before fusion.
 """

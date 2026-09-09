@@ -91,17 +91,42 @@ def stratified_split(
     return train, val, test
 
 
-def build_content_transform(image_size: int = 224, train: bool = True) -> T.Compose:
+def build_content_transform(image_size: int = 224) -> T.Compose:
     """
-    Transform for the raw 'content' stream (models/content_branch.py).
-    Uses ImageNet normalization since the content branch is typically a
-    pretrained-backbone-style CNN.
+    Transform for the 'content' stream (models/content_branch.py).
+    Uses ImageNet normalization since the content branch is a
+    from-scratch CNN operating on natural RGB statistics.
+
+    Deliberately does NOT include random flip/augmentation here — any
+    geometric augmentation must be applied identically to the ela and
+    prnu streams too (they're derived from the same underlying image),
+    so flipping is handled once, upstream, in
+    data/dataset.py:AIGeneratedImageDataset.__getitem__ and applied to
+    the shared PIL image before any branch-specific transform runs.
     """
-    ops = [T.Resize((image_size, image_size))]
-    if train:
-        ops.append(T.RandomHorizontalFlip(p=0.5))
-    ops += [T.ToTensor(), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)]
-    return T.Compose(ops)
+    return T.Compose([
+        T.Resize((image_size, image_size)),
+        T.ToTensor(),
+        T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+    ])
+
+
+def build_prnu_transform(image_size: int = 224) -> T.Compose:
+    """
+    Transform for the 'prnu' stream (models/prnu_branch.py).
+
+    Resize + ToTensor ONLY — no ImageNet normalization. The Handoff doc
+    (Section 2) is explicit that preprocessing "should remain minimal
+    and non-destructive because forensic information, especially PRNU,
+    must be preserved." Per-channel mean/std normalization would rescale
+    the exact pixel amplitudes that the Hybrid Wavelet Layer
+    (models/wavelet_layer.py) needs to compute the noise residual, so
+    it is intentionally skipped here (unlike build_content_transform).
+    """
+    return T.Compose([
+        T.Resize((image_size, image_size)),
+        T.ToTensor(),
+    ])
 
 
 def to_unit_tensor(arr: np.ndarray) -> torch.Tensor:

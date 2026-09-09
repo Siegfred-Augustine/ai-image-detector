@@ -22,23 +22,32 @@ files if they differ:
       ela: true
       prnu: true
     ela:
-      quality: 90
+      quality: 95                 # Handoff Section 3: 95% JPEG quality
       scale: 15.0
-    wavelet:
-      wavelet: "db8"
-      level: 4
+    augmentation:
+      random_hflip: true
     training:
       batch_size: 32
       num_workers: 4
+
+NOTE on the "prnu" stream: it is the RAW (Resize + ToTensor only, no
+ImageNet normalization) image tensor, NOT a precomputed wavelet
+residual. The D4 DWT -> learnable soft-threshold -> IDWT -> residual
+pipeline (Handoff Section 4) now lives inside models/prnu_branch.py /
+models/wavelet_layer.py as a differentiable nn.Module, because the
+per-subband threshold is learnable and needs gradients from the
+training loss (Handoff Section 13). See those files' docstrings.
+data/wavelet.py's NumPy residual functions remain available for
+offline visualization only -- they are not used by this dataset.
 """
 
 from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-import numpy as np
 import torch
 import yaml
+from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
 from data.ela import compute_ela_image
@@ -46,12 +55,12 @@ from data.patches import extract_patches
 from data.preprocessing import (
     Sample,
     build_content_transform,
+    build_prnu_transform,
     index_dataset,
     load_image,
     stratified_split,
     to_unit_tensor,
 )
-from data.wavelet import extract_noise_residual
 
 
 def load_config(config_path: str) -> dict:
@@ -65,7 +74,8 @@ class AIGeneratedImageDataset(Dataset):
         {
           "content": FloatTensor [3, H, W]   (if streams.content)
           "ela":     FloatTensor [3, H, W]   (if streams.ela)
-          "prnu":    FloatTensor [1, H, W]   (if streams.prnu)
+          "prnu":    FloatTensor [3, H, W]   (if streams.prnu; raw image --
+                                               see module docstring)
           "label":   LongTensor  []          (0 = real, 1 = AI-generated)
         }
     Only the streams enabled in the config are included, so
@@ -87,14 +97,20 @@ class AIGeneratedImageDataset(Dataset):
         self.use_prnu = stream_cfg.get("prnu", True)
 
         ela_cfg = config.get("ela", {})
-        self.ela_quality = ela_cfg.get("quality", 90)
-        self.ela_scale = ela_cfg.get("scale", 15.0)
+        # Handoff Section 3: "JPEG recompression at 95% quality" -- this
+        # is a documented requirement, unlike most other hyperparameters.
+        self.ela_quality = ela_cfg.get("quality", 95)
+        self.ela_scale = ela_cfg.get("scale", 15.0)  # amplification -- NOT specified in doc
 
-        wavelet_cfg = config.get("wavelet", {})
-        self.wavelet_name = wavelet_cfg.get("wavelet", "db8")
-        self.wavelet_level = wavelet_cfg.get("level", 4)
+        aug_cfg = config.get("augmentation", {})
+        # NOT specified in research doc (Handoff Section 19: DATA_AUGMENTATION).
+        # A simple horizontal flip is used as a mild, label-preserving
+        # default; disable via config if the team wants strictly
+        # unaugmented training (safer for forensic signals like PRNU).
+        self.random_hflip = aug_cfg.get("random_hflip", True) and train
 
-        self.content_transform = build_content_transform(self.image_size, train=train)
+        self.content_transform = build_content_transform(self.image_size)
+        self.prnu_transform = build_prnu_transform(self.image_size)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -102,7 +118,14 @@ class AIGeneratedImageDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         sample = self.samples[idx]
         pil_image = load_image(sample.path).resize((self.image_size, self.image_size))
-        image_arr = np.asarray(pil_image, dtype=np.float32)
+
+        # Apply any geometric augmentation ONCE, to the shared source
+        # image, before branch-specific preprocessing -- so content,
+        # ela, and prnu all see the *same* geometry for a given sample.
+        # (Previously, only the content stream was flipped, which
+        # decorrelates it from ela/prnu for augmented samples.)
+        if self.random_hflip and torch.rand(1).item() < 0.5:
+            pil_image = pil_image.transpose(Image.FLIP_LEFT_RIGHT)
 
         item: Dict[str, torch.Tensor] = {}
 
@@ -114,9 +137,9 @@ class AIGeneratedImageDataset(Dataset):
             item["ela"] = to_unit_tensor(ela_map)
 
         if self.use_prnu:
-            residual = extract_noise_residual(image_arr, wavelet=self.wavelet_name, level=self.wavelet_level)
-            residual_gray = residual.mean(axis=-1) if residual.ndim == 3 else residual
-            item["prnu"] = to_unit_tensor(residual_gray)
+            # Raw (minimally-preprocessed) image -- the wavelet residual
+            # is computed inside models/prnu_branch.py, not here.
+            item["prnu"] = self.prnu_transform(pil_image)
 
         item["label"] = torch.tensor(sample.label, dtype=torch.long)
         return item

@@ -1,12 +1,29 @@
 """
 PRNU Branch — learns sensor-noise-residual patterns.
 
-Expects a precomputed wavelet residual as input:
-    W = X - IDWT(SoftThreshold(DWT(X)))
-(computed upstream by data/wavelet.py — not part of this file's scope).
+Input: the RAW (minimally-preprocessed) content image tensor, shape
+(B, C, H, W). This branch internally runs the Hybrid Wavelet Layer
+(models/wavelet_layer.py — 1-level D4 DWT, learnable per-subband soft
+threshold, IDWT) to compute the wavelet residual W = X - D, per Handoff
+Section 4, and only THEN feeds W through the two-conv PRNU CNN
+described in Handoff Section 7:
 
-Architecture (AI Handoff spec, Section 7):
+    Raw image X
+       |
+    Hybrid Wavelet Layer  ->  W = X - D          (Section 4)
+       |
     Conv1 -> (NO BatchNorm) -> Conv2 -> BatchNorm -> ReLU -> GAP -> FC -> f_PRNU
+
+WHY THE WAVELET STEP LIVES INSIDE THIS BRANCH (not precomputed upstream)
+--------------------------------------------------------------------
+Handoff Section 4 requires a *learnable* per-subband threshold, and
+Section 13 says PyTorch is required specifically "because the Hybrid
+Wavelet Layer needs end-to-end gradient flow." A one-off NumPy residual
+computed in the data pipeline cannot receive gradients from the
+classification loss, so W must be produced by an nn.Module that sits
+inside the forward pass — hence `HybridWaveletLayer` is instantiated
+here rather than in data/wavelet.py. See that file's docstring for the
+NumPy utilities that remain available for *offline* analysis only.
 
 DESIGN CONSTRAINT, explicit in the handoff doc:
     Do NOT put BatchNorm after Conv1. The residual's raw amplitude
@@ -26,6 +43,8 @@ See Handoff Section 19, "DO NOT INVENT".
 import torch
 import torch.nn as nn
 
+from .wavelet_layer import HybridWaveletLayer
+
 
 class PRNUBranch(nn.Module):
     def __init__(
@@ -38,8 +57,12 @@ class PRNUBranch(nn.Module):
         padding: int = 1,             # NOT specified in research doc — implementation default
         feature_dim: int = 128,       # "n" in the doc — NOT specified, must match other branches
         conv1_activation: bool = True,  # judgment call — doc's diagram doesn't mention one
+        wavelet_init_threshold: float = 0.05,  # NOT specified — see wavelet_layer.py
     ):
         super().__init__()
+
+        # Section 4: D4 DWT -> learnable soft threshold -> IDWT -> residual.
+        self.wavelet = HybridWaveletLayer(in_channels=in_channels, init_threshold=wavelet_init_threshold)
 
         self.conv1 = nn.Conv2d(in_channels, conv1_channels, kernel_size, stride, padding)
         # Intentionally NO BatchNorm here — do not add one.
@@ -52,13 +75,23 @@ class PRNUBranch(nn.Module):
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(conv2_channels, feature_dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_residual: bool = False):
         """
-        x: (B, C, H, W) precomputed wavelet residual tensor W.
-        returns: f_prnu, shape (B, feature_dim)
+        x: (B, C, H, W) raw/minimally-preprocessed image tensor (NOT a
+           precomputed residual — the wavelet residual is computed here).
+        return_residual: if True, also return the wavelet residual W and
+            the learned tau values (useful for visualization/debugging).
+        returns:
+            f_prnu, shape (B, feature_dim)
+            (optionally) (residual, tau) if return_residual=True
         """
-        x = self.relu1(self.conv1(x))
-        x = self.relu2(self.bn2(self.conv2(x)))
-        x = self.gap(x).flatten(1)
-        f_prnu = self.fc(x)
+        residual, tau = self.wavelet(x)
+
+        h = self.relu1(self.conv1(residual))
+        h = self.relu2(self.bn2(self.conv2(h)))
+        h = self.gap(h).flatten(1)
+        f_prnu = self.fc(h)
+
+        if return_residual:
+            return f_prnu, (residual, tau)
         return f_prnu

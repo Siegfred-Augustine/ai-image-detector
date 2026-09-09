@@ -4,6 +4,7 @@ from .content_branch import ContentBranch
 from .attention import AttentionFusion
 from .classifier import Classifier
 from .multistream import MultiStreamModel
+from .wavelet_layer import HybridWaveletLayer
 
 __all__ = [
     "ELABranch",
@@ -12,4 +13,5 @@ __all__ = [
     "AttentionFusion",
     "Classifier",
     "MultiStreamModel",
+    "HybridWaveletLayer",
 ]
