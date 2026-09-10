@@ -101,7 +101,7 @@ const MODEL_DATA: ModelData[] = [
       { seed: 1, precision: 0.941, recall: 0.937, f1: 0.939 },
       { seed: 2, precision: 0.935, recall: 0.944, f1: 0.939 },
       { seed: 3, precision: 0.948, recall: 0.929, f1: 0.938 },
-      { seed: 4, precision: 0.939, recall: 0.941, f1: 0.940 },
+      { seed: 4, precision: 0.939, recall: 0.941, f1: 0.94 },
       { seed: 5, precision: 0.933, recall: 0.938, f1: 0.935 },
     ],
     confusion: {
@@ -171,7 +171,7 @@ const MODEL_DATA: ModelData[] = [
       { seed: 2, precision: 0.897, recall: 0.905, f1: 0.901 },
       { seed: 3, precision: 0.908, recall: 0.898, f1: 0.903 },
       { seed: 4, precision: 0.895, recall: 0.913, f1: 0.904 },
-      { seed: 5, precision: 0.900, recall: 0.902, f1: 0.901 },
+      { seed: 5, precision: 0.9, recall: 0.902, f1: 0.901 },
     ],
     confusion: {
       tp: 1367,
@@ -194,7 +194,7 @@ const MODEL_DATA: ModelData[] = [
       { seed: 2, precision: 0.897, recall: 0.895, f1: 0.896 },
       { seed: 3, precision: 0.911, recall: 0.879, f1: 0.895 },
       { seed: 4, precision: 0.894, recall: 0.901, f1: 0.897 },
-      { seed: 5, precision: 0.900, recall: 0.884, f1: 0.892 },
+      { seed: 5, precision: 0.9, recall: 0.884, f1: 0.892 },
     ],
     confusion: {
       tp: 1332,
@@ -214,7 +214,7 @@ const MODEL_DATA: ModelData[] = [
     color: C.good,
     runs: [
       { seed: 1, precision: 0.928, recall: 0.921, f1: 0.924 },
-      { seed: 2, precision: 0.922, recall: 0.930, f1: 0.926 },
+      { seed: 2, precision: 0.922, recall: 0.93, f1: 0.926 },
       { seed: 3, precision: 0.933, recall: 0.917, f1: 0.925 },
       { seed: 4, precision: 0.919, recall: 0.928, f1: 0.923 },
       { seed: 5, precision: 0.925, recall: 0.922, f1: 0.923 },
@@ -288,15 +288,11 @@ function std(arr: number[]): number {
   const m = mean(arr);
 
   return Math.sqrt(
-    arr.reduce((sum, value) => sum + (value - m) ** 2, 0) /
-      (arr.length - 1)
+    arr.reduce((sum, value) => sum + (value - m) ** 2, 0) / (arr.length - 1),
   );
 }
 
-function metricStats(
-  model: ModelData,
-  key: "precision" | "recall" | "f1"
-) {
+function metricStats(model: ModelData, key: "precision" | "recall" | "f1") {
   const vals = model.runs.map((run) => run[key]);
 
   return {
@@ -330,9 +326,7 @@ function Chip({ children, color, dim }: ChipProps) {
         letterSpacing: "0.02em",
         padding: "3px 8px",
         borderRadius: 4,
-        border: `1px solid ${
-          dim ? C.borderSoft : `${color}55`
-        }`,
+        border: `1px solid ${dim ? C.borderSoft : `${color}55`}`,
         color: dim ? C.textFaint : color,
         background: dim ? "transparent" : `${color}14`,
         whiteSpace: "nowrap",
@@ -367,32 +361,24 @@ function SigBadge({ p }: { p: number | null }) {
 /* ------------------------------------------------------------------ */
 
 export default function ForensicBenchmark() {
-  const [activeGroup, setActiveGroup] =
-    useState<ModelGroup>("sop1");
+  const [activeGroup, setActiveGroup] = useState<ModelGroup>("sop1");
 
-  const [inspectId, setInspectId] =
-    useState<string>("full");
+  const [inspectId, setInspectId] = useState<string>("full");
 
   const visibleModels = useMemo(() => {
     if (activeGroup === "sop1") {
       return MODEL_DATA.filter(
-        (model) =>
-          model.group === "flagship" ||
-          model.group === "sop1"
+        (model) => model.group === "flagship" || model.group === "sop1",
       );
     }
 
     if (activeGroup === "ablation") {
       return MODEL_DATA.filter(
-        (model) =>
-          model.group === "flagship" ||
-          model.group === "ablation"
+        (model) => model.group === "flagship" || model.group === "ablation",
       );
     }
 
-    return MODEL_DATA.filter(
-      (model) => model.group === "flagship"
-    );
+    return MODEL_DATA.filter((model) => model.group === "flagship");
   }, [activeGroup]);
 
   const chartData = visibleModels.map((model) => {
@@ -408,16 +394,11 @@ export default function ForensicBenchmark() {
   });
 
   const inspectModel =
-    MODEL_DATA.find((model) => model.id === inspectId) ??
-    MODEL_DATA[0];
+    MODEL_DATA.find((model) => model.id === inspectId) ?? MODEL_DATA[0];
 
   const cm = inspectModel.confusion;
 
-  const total =
-    cm.tp +
-    cm.fn +
-    cm.fp +
-    cm.tn;
+  const total = cm.tp + cm.fn + cm.fp + cm.tn;
 
   return (
     <div
@@ -506,11 +487,10 @@ export default function ForensicBenchmark() {
               fontSize: 14,
             }}
           >
-            Comparing the full attention-fused model against
-            single-stream and branch-ablated variants defined
-            in the handoff spec, on the FFHQ / AI-Face test
-            split (1,500 real + 1,500 AI-generated, 5 runs
-            per model).
+            Comparing the full attention-fused model against single-stream and
+            branch-ablated variants defined in the handoff spec, on the FFHQ /
+            AI-Face test split (1,500 real + 1,500 AI-generated, 5 runs per
+            model).
           </p>
         </div>
 
@@ -529,12 +509,9 @@ export default function ForensicBenchmark() {
             lineHeight: 1.5,
           }}
         >
-          <strong style={{ color: C.text }}>
-            Placeholder data.
-          </strong>{" "}
-          All numbers below are mock values so the dashboard
-          has something to render — swap in real results by
-          editing the{" "}
+          <strong style={{ color: C.text }}>Placeholder data.</strong> All
+          numbers below are mock values so the dashboard has something to render
+          — swap in real results by editing the{" "}
           <code
             style={{
               ...mono,
@@ -545,10 +522,9 @@ export default function ForensicBenchmark() {
           </code>{" "}
           array at the top of the file.
           <br />
-          Several hyperparameters (patch size, branch filter
-          counts, learning rate, batch size, FC dimensions)
-          are marked <em>not specified</em> in the source spec
-          and still need to be fixed before real runs can
+          Several hyperparameters (patch size, branch filter counts, learning
+          rate, batch size, FC dimensions) are marked <em>not specified</em> in
+          the source spec and still need to be fixed before real runs can
           produce these numbers.
         </div>
 
@@ -563,18 +539,13 @@ export default function ForensicBenchmark() {
             overflowX: "auto",
           }}
         >
-          {GROUPS.filter(
-            (group) => group.id !== "flagship"
-          ).map((group) => {
-            const active =
-              activeGroup === group.id;
+          {GROUPS.filter((group) => group.id !== "flagship").map((group) => {
+            const active = activeGroup === group.id;
 
             return (
               <button
                 key={group.id}
-                onClick={() =>
-                  setActiveGroup(group.id)
-                }
+                onClick={() => setActiveGroup(group.id)}
                 style={{
                   ...sans,
                   background: "transparent",
@@ -582,9 +553,7 @@ export default function ForensicBenchmark() {
                   borderBottom: active
                     ? `2px solid ${C.full}`
                     : "2px solid transparent",
-                  color: active
-                    ? C.text
-                    : C.textDim,
+                  color: active ? C.text : C.textDim,
                   fontSize: 14,
                   fontWeight: 500,
                   padding: "10px 4px",
@@ -601,10 +570,7 @@ export default function ForensicBenchmark() {
 
         {/* ---------------- COMPARISON TABLE ---------------- */}
 
-        <div
-          className="scroll-x"
-          style={{ marginBottom: 32 }}
-        >
+        <div className="scroll-x" style={{ marginBottom: 32 }}>
           <table style={{ fontSize: 13.5 }}>
             <thead>
               <tr
@@ -626,34 +592,21 @@ export default function ForensicBenchmark() {
 
             <tbody>
               {visibleModels.map((model) => {
-                const precision = metricStats(
-                  model,
-                  "precision"
-                );
+                const precision = metricStats(model, "precision");
 
-                const recall = metricStats(
-                  model,
-                  "recall"
-                );
+                const recall = metricStats(model, "recall");
 
-                const f1 = metricStats(
-                  model,
-                  "f1"
-                );
+                const f1 = metricStats(model, "f1");
 
                 return (
                   <tr
                     key={model.id}
-                    onClick={() =>
-                      setInspectId(model.id)
-                    }
+                    onClick={() => setInspectId(model.id)}
                     style={{
                       borderBottom: `1px solid ${C.borderSoft}`,
                       cursor: "pointer",
                       background:
-                        inspectId === model.id
-                          ? C.surface2
-                          : "transparent",
+                        inspectId === model.id ? C.surface2 : "transparent",
                     }}
                   >
                     <td>
@@ -727,15 +680,11 @@ export default function ForensicBenchmark() {
                     </td>
 
                     <td>
-                      <SigBadge
-                        p={model.pVsFull}
-                      />
+                      <SigBadge p={model.pVsFull} />
                     </td>
 
                     <td>
-                      <SigBadge
-                        p={model.mcnemarVsFull}
-                      />
+                      <SigBadge p={model.mcnemarVsFull} />
                     </td>
                   </tr>
                 );
@@ -772,14 +721,11 @@ export default function ForensicBenchmark() {
               marginBottom: 12,
             }}
           >
-            Averaged across 5 seeded runs · dashed line marks
-            the Full Model's mean
+            Averaged across 5 seeded runs · dashed line marks the Full Model's
+            mean
           </div>
 
-          <ResponsiveContainer
-            width="100%"
-            height={280}
-          >
+          <ResponsiveContainer width="100%" height={280}>
             <BarChart
               data={chartData}
               margin={{
@@ -839,10 +785,7 @@ export default function ForensicBenchmark() {
                 }}
                 formatter={(value, key) => {
                   if (key === "f1Mean") {
-                    return [
-                      `${value}%`,
-                      "F1",
-                    ];
+                    return [`${value}%`, "F1"];
                   }
 
                   return [value, key];
@@ -850,33 +793,17 @@ export default function ForensicBenchmark() {
               />
 
               <ReferenceLine
-                y={
-                  chartData.find(
-                    (data) => data.id === "full"
-                  )?.f1Mean
-                }
+                y={chartData.find((data) => data.id === "full")?.f1Mean}
                 stroke={C.full}
                 strokeDasharray="4 4"
               />
 
-              <Bar
-                dataKey="f1Mean"
-                radius={[
-                  4,
-                  4,
-                  0,
-                  0,
-                ]}
-              >
+              <Bar dataKey="f1Mean" radius={[4, 4, 0, 0]}>
                 {chartData.map((data) => (
                   <Cell
                     key={data.id}
                     fill={data.color}
-                    fillOpacity={
-                      data.id === inspectId
-                        ? 1
-                        : 0.65
-                    }
+                    fillOpacity={data.id === inspectId ? 1 : 0.65}
                   />
                 ))}
               </Bar>
@@ -911,8 +838,7 @@ export default function ForensicBenchmark() {
                   fontWeight: 600,
                 }}
               >
-                Confusion matrix —{" "}
-                {inspectModel.name}
+                Confusion matrix — {inspectModel.name}
               </div>
 
               <div
@@ -921,20 +847,14 @@ export default function ForensicBenchmark() {
                   color: C.textFaint,
                 }}
               >
-                Pooled over{" "}
-                {total.toLocaleString()} test images ·
-                click a row above to inspect a different
-                model
+                Pooled over {total.toLocaleString()} test images · click a row
+                above to inspect a different model
               </div>
             </div>
 
             <select
               value={inspectId}
-              onChange={(event) =>
-                setInspectId(
-                  event.target.value
-                )
-              }
+              onChange={(event) => setInspectId(event.target.value)}
               style={{
                 background: C.surface2,
                 color: C.text,
@@ -946,10 +866,7 @@ export default function ForensicBenchmark() {
               }}
             >
               {MODEL_DATA.map((model) => (
-                <option
-                  key={model.id}
-                  value={model.id}
-                >
+                <option key={model.id} value={model.id}>
                   {model.name}
                 </option>
               ))}
@@ -959,8 +876,7 @@ export default function ForensicBenchmark() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns:
-                "minmax(0,1fr) minmax(0,1fr)",
+              gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)",
               gap: 10,
               maxWidth: 460,
             }}
@@ -1014,9 +930,9 @@ export default function ForensicBenchmark() {
             >
               false negatives
             </strong>{" "}
-            (an AI-generated image accepted as real) as the
-            highest-stakes forensic failure mode — worth
-            watching even when overall F1 looks competitive.
+            (an AI-generated image accepted as real) as the highest-stakes
+            forensic failure mode — worth watching even when overall F1 looks
+            competitive.
           </div>
         </div>
       </div>
@@ -1028,17 +944,8 @@ export default function ForensicBenchmark() {
 /* CONFUSION MATRIX CELL                                              */
 /* ------------------------------------------------------------------ */
 
-function CMCell({
-  label,
-  value,
-  total,
-  color,
-  note,
-}: CMCellProps) {
-  const pct =
-    total > 0
-      ? ((value / total) * 100).toFixed(1)
-      : "0.0";
+function CMCell({ label, value, total, color, note }: CMCellProps) {
+  const pct = total > 0 ? ((value / total) * 100).toFixed(1) : "0.0";
 
   return (
     <div

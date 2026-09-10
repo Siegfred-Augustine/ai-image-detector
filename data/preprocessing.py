@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import random
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -40,6 +40,8 @@ def index_dataset(
     root_dir: str,
     real_dirname: str = "real",
     fake_dirname: str = "fake",
+    max_per_class: Optional[int] = None,
+    seed: int = 42,
 ) -> List[Sample]:
     """
     Scan `root_dir` for two class subfolders and return a flat list of
@@ -48,15 +50,29 @@ def index_dataset(
             real/*.jpg
             fake/*.jpg
     Adjust `real_dirname` / `fake_dirname` if your raw data layout differs.
+
+    Args:
+        max_per_class: if set, randomly subsample down to at most this
+            many images per class (real/fake), BEFORE the train/val/test
+            split -- so val_ratio/test_ratio still apply proportionally
+            to the smaller pool. Useful for dataset-size experiments
+            (e.g. "how does accuracy change with 500 vs 5000 images per
+            class") without having to physically move files around.
+            None (default) uses every image found.
+        seed: controls which images get kept when subsampling, so the
+            same `max_per_class` value always picks the same subset.
     """
+    rng = random.Random(seed)
     samples: List[Sample] = []
     for dirname, label in ((real_dirname, 0), (fake_dirname, 1)):
         class_dir = os.path.join(root_dir, dirname)
         if not os.path.isdir(class_dir):
             raise FileNotFoundError(f"Expected class folder not found: {class_dir}")
-        for fname in sorted(os.listdir(class_dir)):
-            if fname.lower().endswith(VALID_EXTENSIONS):
-                samples.append(Sample(path=os.path.join(class_dir, fname), label=label))
+        class_files = sorted(f for f in os.listdir(class_dir) if f.lower().endswith(VALID_EXTENSIONS))
+        if max_per_class is not None and len(class_files) > max_per_class:
+            class_files = rng.sample(class_files, max_per_class)
+        for fname in class_files:
+            samples.append(Sample(path=os.path.join(class_dir, fname), label=label))
     if not samples:
         raise RuntimeError(f"No images found under {root_dir} ({real_dirname}/, {fake_dirname}/)")
     return samples

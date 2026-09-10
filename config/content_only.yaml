@@ -5,9 +5,9 @@ name: content_only
 
 model:
   active_branches: [content]
-  feature_dim: 128            # n — NOT specified in research doc, confirm with team
-  classifier_hidden_dim: 64   # NOT specified in research doc
-  dropout: 0.5                # NOT specified in research doc
+  feature_dim: 128 # n — NOT specified in research doc, confirm with team
+  classifier_hidden_dim: 64 # NOT specified in research doc
+  dropout: 0.5 # NOT specified in research doc
   num_classes: 2
 
 # Per-branch overrides (filters, kernel size, etc.) — leave empty to use
@@ -21,12 +21,12 @@ branch_overrides: {}
 # on the SAME test images, which only holds if data.root/val_ratio/
 # test_ratio/seed are identical everywhere.
 data:
-  root: "./data/raw"      # expects root/real/*.jpg and root/fake/*.jpg — NOT specified in doc, adjust to your layout
-  image_size: 224          # Handoff Section 1: input resolution = 224x224
-  val_ratio: 0.15          # Handoff Section 1: 70/15/15 split
+  root: "./data/raw" # expects root/real/*.jpg and root/fake/*.jpg — NOT specified in doc, adjust to your layout
+  image_size: 224 # Handoff Section 1: input resolution = 224x224
+  val_ratio: 0.15 # Handoff Section 1: 70/15/15 split
   test_ratio: 0.15
-  seed: 42                 # NOT specified in doc — keep identical across all configs
-
+  seed: 42 # NOT specified in doc — keep identical across all configs
+  # max_samples_per_class: 2000   # NOT specified — optional cap on dataset size (per real/fake class), before the train/val/test split. Omit/leave commented to use every image found.
 # Which of the 3 forensic streams this dataset instance computes per
 # item. Keep in sync with model.active_branches above — mismatches just
 # waste compute (extra streams are computed but ignored by the model),
@@ -37,11 +37,11 @@ streams:
   prnu: false
 
 ela:
-  quality: 95    # Handoff Section 3: "JPEG recompression at 95% quality" — documented requirement
-  scale: 15.0    # NOT specified in doc — implementation default (amplifies the raw diff so it's learnable)
+  quality: 95 # Handoff Section 3: "JPEG recompression at 95% quality" — documented requirement
+  scale: 15.0 # NOT specified in doc — implementation default (amplifies the raw diff so it's learnable)
 
 augmentation:
-  random_hflip: true   # NOT specified in doc (Section 19: DATA_AUGMENTATION) — mild, label-preserving default
+  random_hflip: true # NOT specified in doc (Section 19: DATA_AUGMENTATION) — mild, label-preserving default
 
 # Training hyperparameters are NOT specified in the research doc
 # (Handoff Section 19: LEARNING_RATE, WEIGHT_DECAY, BATCH_SIZE, EPOCHS,
@@ -50,13 +50,13 @@ augmentation:
 # treating them as final, and prefer overriding via CLI flags
 # (training/train.py --lr, --epochs, etc.) for quick experimentation.
 training:
-  learning_rate: 0.0001       # NOT specified — implementation default (conservative for AdamW + BatchNorm)
-  weight_decay: 0.0001        # NOT specified — implementation default
-  batch_size: 32              # NOT specified — implementation default
-  epochs: 30                  # NOT specified — implementation default
-  lr_min: 0.000001            # NOT specified — CosineAnnealingLR floor (Handoff Section 12 specifies the scheduler type only)
-  optimizer_betas: [0.9, 0.999]   # NOT specified — AdamW default
-  label_smoothing: 0.1        # Handoff Section 12: documented requirement
-  grad_clip_norm: 1.0         # Handoff Section 12: documented requirement
-  early_stopping_patience: 7  # NOT specified — implementation default (epochs of no val-F1 improvement)
-  num_workers: 4              # NOT specified — implementation default, adjust to your machine
+  learning_rate: 0.0001 # NOT specified — implementation default (conservative for AdamW + BatchNorm)
+  weight_decay: 0.0001 # NOT specified — implementation default
+  batch_size: 32 # NOT specified — implementation default
+  epochs: 30 # NOT specified — implementation default
+  lr_min: 0.000001 # NOT specified — CosineAnnealingLR floor (Handoff Section 12 specifies the scheduler type only)
+  optimizer_betas: [0.9, 0.999] # NOT specified — AdamW default
+  label_smoothing: 0.1 # Handoff Section 12: documented requirement
+  grad_clip_norm: 1.0 # Handoff Section 12: documented requirement
+  early_stopping_patience: 7 # NOT specified — implementation default (epochs of no val-F1 improvement)
+  num_workers: 4 # NOT specified — implementation default, adjust to your machine

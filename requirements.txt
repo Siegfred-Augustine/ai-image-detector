@@ -9,3 +9,8 @@ pyyaml
 PyWavelets       # data/wavelet.py offline utilities (pywt) — NOT used by the learnable
                  # PRNU pipeline itself, see models/wavelet_layer.py
 Pillow           # image I/O (data/preprocessing.py, data/ela.py)
+
+# Deployable demo tool (serve/api.py, serve/inference.py)
+fastapi
+uvicorn[standard]
+python-multipart   # required by FastAPI to parse multipart/form-data file uploads

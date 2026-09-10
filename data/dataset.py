@@ -1,149 +1,43 @@
 """
-data/dataset.py
+data/wavelet.py
 
-PyTorch Dataset for the multi-stream AI-generated image detector. Reads
-an ablation config (config/full.yaml, config/ela_only.yaml, etc.) to
-decide which of the three streams -- content, ela, prnu -- are computed
-and returned, so the same dataset class serves every experiment in
-experiments/run_experiments.py without branching logic scattered
-elsewhere.
+OFFLINE / EXPLORATORY wavelet-domain utilities -- built on NumPy + PyWavelets,
+NOT used by the main training pipeline.
 
-Expected config shape -- adjust these keys to match your actual YAML
-files if they differ:
+IMPORTANT: these functions do NOT power models/prnu_branch.py.
+The Handoff doc (Section 4) requires the PRNU residual to be computed by
+a *learnable* per-subband soft threshold with end-to-end gradient flow
+(Section 13), which means it has to live inside the network as a real
+nn.Module -- see models/wavelet_layer.py:HybridWaveletLayer, which
+implements the documented D4 / 1-level / learnable-threshold pipeline
+and is called directly by models/prnu_branch.py on every forward pass.
+data/dataset.py accordingly feeds PRNUBranch a raw (minimally
+preprocessed) image, not a residual from this file.
 
-    data:
-      root: "./data/raw"          # contains real/ and fake/ subfolders
-      image_size: 224
-      val_ratio: 0.15
-      test_ratio: 0.15
-      seed: 42
-    streams:
-      content: true
-      ela: true
-      prnu: true
-    ela:
-      quality: 95                 # Handoff Section 3: 95% JPEG quality
-      scale: 15.0
-    augmentation:
-      random_hflip: true
-    training:
-      batch_size: 32
-      num_workers: 4
+What THIS file is still useful for:
+    - Offline visualization / EDA notebooks (e.g. "what does a fixed,
+      non-learned wavelet residual look like for this image?").
+    - A fixed-filter (db8, multi-level, universal-threshold) baseline
+      if the team ever wants to compare a classical, non-learned
+      residual against the learnable Hybrid Wavelet Layer's output.
+    - `wavelet_pixel_features`, which produces pixel-resolution detail
+      maps for exploratory pixel-wise fusion outside the main model.
 
-NOTE on the "prnu" stream: it is the RAW (Resize + ToTensor only, no
-ImageNet normalization) image tensor, NOT a precomputed wavelet
-residual. The D4 DWT -> learnable soft-threshold -> IDWT -> residual
-pipeline (Handoff Section 4) now lives inside models/prnu_branch.py /
-models/wavelet_layer.py as a differentiable nn.Module, because the
-per-subband threshold is learnable and needs gradients from the
-training loss (Handoff Section 13). See those files' docstrings.
-data/wavelet.py's NumPy residual functions remain available for
-offline visualization only -- they are not used by this dataset.
+1. Wavelet denoising -> noise residual extraction: a classical (non-
+   learned) estimate of the sensor/generator noise residual, following
+   the standard wavelet-based-denoising-filter approach (Lyu & Farid /
+   Lukas et al.). True camera-PRNU reference patterns aren't available
+   for arbitrary web-sourced images, hence this residual-based proxy.
+2. Multi-level DWT detail maps, upsampled back to pixel resolution so
+   they can be concatenated with the content stream before fusion.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Tuple
 
-import torch
-import yaml
-from PIL import Image
-from torch.utils.data import DataLoader, Dataset
-
-from data.ela import compute_ela_image
-from data.patches import extract_patches
-from data.preprocessing import (
-    Sample,
-    build_content_transform,
-    build_prnu_transform,
-    index_dataset,
-    load_image,
-    stratified_split,
-    to_unit_tensor,
-)
-
-
-def load_config(config_path: str) -> dict:
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-class AIGeneratedImageDataset(Dataset):
-    """
-    Returns a dict per item:
-        {
-          "content": FloatTensor [3, H, W]   (if streams.content)
-          "ela":     FloatTensor [3, H, W]   (if streams.ela)
-          "prnu":    FloatTensor [3, H, W]   (if streams.prnu; raw image --
-                                               see module docstring)
-          "label":   LongTensor  []          (0 = real, 1 = AI-generated)
-        }
-    Only the streams enabled in the config are included, so
-    no_ela.yaml / ela_only.yaml / prnu_only.yaml / etc. each naturally
-    produce the right batch shape for their ablation run.
-    """
-
-    def __init__(self, samples: List[Sample], config: dict, train: bool = True):
-        self.samples = samples
-        self.config = config
-        self.train = train
-
-        data_cfg = config.get("data", {})
-        self.image_size = data_cfg.get("image_size", 224)
-
-        stream_cfg = config.get("streams", {"content": True, "ela": True, "prnu": True})
-        self.use_content = stream_cfg.get("content", True)
-        self.use_ela = stream_cfg.get("ela", True)
-        self.use_prnu = stream_cfg.get("prnu", True)
-
-        ela_cfg = config.get("ela", {})
-        # Handoff Section 3: "JPEG recompression at 95% quality" -- this
-        # is a documented requirement, unlike most other hyperparameters.
-        self.ela_quality = ela_cfg.get("quality", 95)
-        self.ela_scale = ela_cfg.get("scale", 15.0)  # amplification -- NOT specified in doc
-
-        aug_cfg = config.get("augmentation", {})
-        # NOT specified in research doc (Handoff Section 19: DATA_AUGMENTATION).
-        # A simple horizontal flip is used as a mild, label-preserving
-        # default; disable via config if the team wants strictly
-        # unaugmented training (safer for forensic signals like PRNU).
-        self.random_hflip = aug_cfg.get("random_hflip", True) and train
-
-        self.content_transform = build_content_transform(self.image_size)
-        self.prnu_transform = build_prnu_transform(self.image_size)
-
-    def __len__(self) -> int:
-        return len(self.samples)
-
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        sample = self.samples[idx]
-        pil_image = load_image(sample.path).resize((self.image_size, self.image_size))
-
-        # Apply any geometric augmentation ONCE, to the shared source
-        # image, before branch-specific preprocessing -- so content,
-        # ela, and prnu all see the *same* geometry for a given sample.
-        # (Previously, only the content stream was flipped, which
-        # decorrelates it from ela/prnu for augmented samples.)
-        if self.random_hflip and torch.rand(1).item() < 0.5:
-            pil_image = pil_image.transpose(Image.FLIP_LEFT_RIGHT)
-
-        item: Dict[str, torch.Tensor] = {}
-
-        if self.use_content:
-            item["content"] = self.content_transform(pil_image)
-
-        if self.use_ela:
-            ela_map = compute_ela_image(pil_image, quality=self.ela_quality, scale=self.ela_scale)
-            item["ela"] = to_unit_tensor(ela_map)
-
-        if self.use_prnu:
-            # Raw (minimally-preprocessed) image -- the wavelet residual
-            # is computed inside models/prnu_branch.py, not here.
-            item["prnu"] = self.prnu_transform(pil_image)
-
-        item["label"] = torch.tensor(sample.label, dtype=torch.long)
-        return item
-
+import numpy as np
+import pywt
 
 def build_datasets(config: dict, data_root: Optional[str] = None):
     """Index the raw data folder, split it, and return (train_ds, val_ds, test_ds) built from the same config."""
@@ -152,36 +46,86 @@ def build_datasets(config: dict, data_root: Optional[str] = None):
     val_ratio = data_cfg.get("val_ratio", 0.15)
     test_ratio = data_cfg.get("test_ratio", 0.15)
     seed = data_cfg.get("seed", 42)
+    # NOT specified in research doc -- optional dataset-size control.
+    # None (default) uses every image found under root/real, root/fake.
+    max_samples_per_class = data_cfg.get("max_samples_per_class", None)
 
-    all_samples = index_dataset(root)
+    all_samples = index_dataset(root, max_per_class=max_samples_per_class, seed=seed)
     train_samples, val_samples, test_samples = stratified_split(
         all_samples, val_ratio=val_ratio, test_ratio=test_ratio, seed=seed
     )
 
-    train_ds = AIGeneratedImageDataset(train_samples, config, train=True)
-    val_ds = AIGeneratedImageDataset(val_samples, config, train=False)
-    test_ds = AIGeneratedImageDataset(test_samples, config, train=False)
-    return train_ds, val_ds, test_ds
+def _to_grayscale(image: np.ndarray) -> np.ndarray:
+    return image.mean(axis=-1) if image.ndim == 3 else image
 
 
-def build_dataloaders(config: dict, data_root: Optional[str] = None) -> Dict[str, DataLoader]:
-    """Convenience wrapper used by training/train.py and experiments/run_experiments.py."""
-    train_ds, val_ds, test_ds = build_datasets(config, data_root=data_root)
-    train_cfg = config.get("training", {})
-    batch_size = train_cfg.get("batch_size", 32)
-    num_workers = train_cfg.get("num_workers", 4)
-
-    return {
-        "train": DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True),
-        "val": DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers),
-        "test": DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers),
-    }
-
-
-def get_patchwise_input(image: np.ndarray, patch_size: int = 64) -> np.ndarray:
+def wavelet_denoise(image: np.ndarray, wavelet: str = "db8", level: int = 4) -> np.ndarray:
     """
-    Optional helper for patch-level (rather than whole-image) fusion
-    experiments: turns one HxWxC image into an (N, patch_size,
-    patch_size, C) array via data.patches.extract_patches.
+    Soft-threshold wavelet denoising (per-channel if image is HxWxC).
+    Threshold follows the VisuShrink universal-threshold rule, with sigma
+    estimated from the finest detail sub-band's median absolute deviation.
     """
-    return extract_patches(image, patch_size=patch_size)
+
+    def _denoise_channel(channel: np.ndarray) -> np.ndarray:
+        coeffs = pywt.wavedec2(channel, wavelet=wavelet, level=level)
+        cA, detail_coeffs = coeffs[0], coeffs[1:]
+
+        finest_cH = detail_coeffs[-1][0]
+        sigma = np.median(np.abs(finest_cH)) / 0.6745
+        threshold = sigma * np.sqrt(2 * np.log(channel.size))
+
+        denoised_details = [
+            tuple(pywt.threshold(band, threshold, mode="soft") for band in level_bands)
+            for level_bands in detail_coeffs
+        ]
+        return pywt.waverec2([cA] + denoised_details, wavelet=wavelet)
+
+    if image.ndim == 2:
+        out = _denoise_channel(image)
+        return out[: image.shape[0], : image.shape[1]]
+
+    h, w = image.shape[:2]
+    channels = [_denoise_channel(image[..., c])[:h, :w] for c in range(image.shape[-1])]
+    return np.stack(channels, axis=-1)
+
+
+def extract_noise_residual(image: np.ndarray, wavelet: str = "db8", level: int = 4) -> np.ndarray:
+    """
+    PRNU-style noise residual: original image minus its wavelet-denoised
+    version. Consumed by models/prnu_branch.py.
+    """
+    denoised = wavelet_denoise(image, wavelet=wavelet, level=level)
+    return image.astype(np.float32) - denoised.astype(np.float32)
+
+
+def dwt_detail_maps(
+    image: np.ndarray,
+    wavelet: str = "haar",
+    level: int = 1,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Single-level 2D DWT on a grayscale version of `image`.
+    Returns (LL, LH, HL, HH); each is roughly half the input's H and W
+    (approximation, and horizontal/vertical/diagonal detail).
+    """
+    gray = _to_grayscale(image)
+    LL, (LH, HL, HH) = pywt.dwt2(gray, wavelet)
+    return LL, LH, HL, HH
+
+
+def wavelet_pixel_features(image: np.ndarray, wavelet: str = "haar") -> np.ndarray:
+    """
+    Build a pixel-resolution feature stack for the fusion step: each
+    detail sub-band is nearest-neighbor-upsampled back to the original
+    HxW so it can be concatenated channel-wise with the content stream.
+
+    Returns: float32 HxWx3 array (LH, HL, HH upsampled to input size).
+    """
+    h, w = image.shape[:2]
+    _, LH, HL, HH = dwt_detail_maps(image, wavelet=wavelet, level=1)
+
+    def _upsample(band: np.ndarray) -> np.ndarray:
+        return np.kron(band, np.ones((2, 2)))[:h, :w]
+
+    stacked = np.stack([_upsample(LH), _upsample(HL), _upsample(HH)], axis=-1)
+    return stacked.astype(np.float32)

@@ -2,7 +2,9 @@
 
 Detects AI-generated images using three forensic streams — Content, ELA
 (Error Level Analysis), and PRNU (via a learnable wavelet-residual layer)
-— fused with attention. 
+— fused with attention. See `AI_Agent_Handoff_Multi_Stream_CNN.md` for
+the full research spec, and `AGENT_CHANGES.md` for a detailed log of
+everything filled in / fixed to make the codebase runnable.
 
 ## 1. Setup
 
@@ -29,7 +31,7 @@ directly in every `config/*.yaml`:
 
 ```yaml
 data:
-  root: "./data/raw"   # <- change this
+  root: "./data/raw" # <- change this
 ```
 
 **Important:** if you edit `data.root` (or `data.seed`, `val_ratio`,
@@ -45,16 +47,17 @@ python -m training.train --config config/full.yaml --seed 42
 
 Optional flags:
 
-| Flag | Meaning |
-|---|---|
-| `--epochs N` | Override the config's epoch count |
-| `--device cuda\|mps\|cpu` | Force a device (auto-detects otherwise) |
-| `--data-root PATH` | Override `config.data.root` |
-| `--checkpoint-root DIR` | Where checkpoints get saved (default `checkpoints/`) |
-| `--results-root DIR` | Where training history gets saved (default `results/`) |
-| `--run-name NAME` | Custom name for this run's output folder |
+| Flag                      | Meaning                                                |
+| ------------------------- | ------------------------------------------------------ |
+| `--epochs N`              | Override the config's epoch count                      |
+| `--device cuda\|mps\|cpu` | Force a device (auto-detects otherwise)                |
+| `--data-root PATH`        | Override `config.data.root`                            |
+| `--checkpoint-root DIR`   | Where checkpoints get saved (default `checkpoints/`)   |
+| `--results-root DIR`      | Where training history gets saved (default `results/`) |
+| `--run-name NAME`         | Custom name for this run's output folder               |
 
 **Output:**
+
 ```
 checkpoints/full/best.pt        # best validation-F1 checkpoint
 checkpoints/full/last.pt        # final-epoch checkpoint
@@ -110,16 +113,17 @@ python -m experiments.run_experiments --configs full ela_only --seeds 42 --epoch
 
 Useful flags:
 
-| Flag | Meaning |
-|---|---|
-| `--configs full ela_only ...` | Subset of configs to run (must include `full`) |
-| `--seeds 42 123 ...` | Override the 5 default seeds |
-| `--epochs N` | Override epoch count for every run (for quick tests) |
-| `--data-root PATH` | Override `config.data.root` for every config |
-| `--device cuda\|mps\|cpu` | Force a device |
-| `--quiet` | Suppress per-epoch training logs |
+| Flag                          | Meaning                                              |
+| ----------------------------- | ---------------------------------------------------- |
+| `--configs full ela_only ...` | Subset of configs to run (must include `full`)       |
+| `--seeds 42 123 ...`          | Override the 5 default seeds                         |
+| `--epochs N`                  | Override epoch count for every run (for quick tests) |
+| `--data-root PATH`            | Override `config.data.root` for every config         |
+| `--device cuda\|mps\|cpu`     | Force a device                                       |
+| `--quiet`                     | Suppress per-epoch training logs                     |
 
 **Output:**
+
 ```
 results/summary.json   # everything, machine-readable
 results/summary.md     # human-readable table of results + p-values
@@ -138,3 +142,54 @@ results/<config>/      # every seed's training history + test predictions
 - The PRNU branch computes its wavelet residual internally (a learnable
   D4 wavelet layer, `models/wavelet_layer.py`) — you don't need to
   precompute anything for it; feeding it raw images is correct.
+
+## 7. The actual demo tool (upload an image, get a prediction)
+
+This is separate from the benchmark dashboard above — it's the tool
+that serves your trained Full Model: upload an image, get a
+Real / AI-generated prediction with confidence, the per-branch
+attention weights, and the extracted ELA + PRNU maps.
+
+It's two pieces: a backend API (`serve/`) and a frontend page
+(`frontend/src/pages/Detector.tsx`).
+
+### 7a. Start the backend
+
+You need a trained Full Model checkpoint first (step 3 above). Then:
+
+```bash
+uvicorn serve.api:app --reload --port 8000
+```
+
+By default it loads `checkpoints/full/best.pt`. Point it at a
+different checkpoint with an environment variable:
+
+```bash
+CHECKPOINT_PATH=checkpoints/full/best.pt DEVICE=cuda uvicorn serve.api:app --reload --port 8000
+```
+
+Check it's up:
+
+```bash
+curl http://localhost:8000/health
+```
+
+`POST /predict` accepts one or more images (`multipart/form-data`,
+field name `files`) and returns, per image: label, confidence,
+per-class probabilities, per-branch attention weights, an ELA map
+(base64 PNG), a PRNU wavelet-residual map (base64 PNG), and the
+learned per-subband wavelet thresholds.
+
+### 7b. Start the frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open the printed local URL — it defaults to the **Detector** tab
+(upload images, see predictions) with a **Benchmark** tab alongside it
+for the results dashboard. If the backend isn't on
+`http://localhost:8000`, copy `frontend/.env.example` to `.env` and
+change `VITE_API_BASE`.
