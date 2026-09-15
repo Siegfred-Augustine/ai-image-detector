@@ -30,7 +30,7 @@ data:
   val_ratio: 0.15 # Handoff Section 1: 70/15/15 split
   test_ratio: 0.15
   seed: 42 # NOT specified in doc — keep identical across all configs
-  # max_samples_per_class: 2000   # NOT specified — optional cap on dataset size (per real/fake class), before the train/val/test split. Omit/leave commented to use every image found.
+  max_samples_per_class: 2000 # NOT specified — optional cap on dataset size (per real/fake class), before the train/val/test split. Omit/leave commented to use every image found.
 # Which of the 3 forensic streams this dataset instance computes per
 # item. Keep in sync with model.active_branches above — mismatches just
 # waste compute (extra streams are computed but ignored by the model),
