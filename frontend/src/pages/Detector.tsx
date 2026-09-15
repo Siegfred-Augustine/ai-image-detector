@@ -79,6 +79,62 @@ function pct(x: number | undefined): string {
   return `${(x * 100).toFixed(1)}%`;
 }
 
+/**
+ * Generates a fake ELA/PRNU-looking base64 PNG entirely in the browser
+ * (canvas noise), so the UI can be demoed/tested without a running
+ * backend or a trained checkpoint at all.
+ */
+function generateMockImageBase64(size = 224, colorful: boolean): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  const imageData = ctx.createImageData(size, size);
+  for (let i = 0; i < imageData.data.length; i += 4) {
+    if (colorful) {
+      imageData.data[i] = Math.floor(Math.random() * 60);
+      imageData.data[i + 1] = Math.floor(Math.random() * 255);
+      imageData.data[i + 2] = Math.floor(Math.random() * 120);
+    } else {
+      const v = Math.floor(Math.random() * 255);
+      imageData.data[i] = v;
+      imageData.data[i + 1] = v;
+      imageData.data[i + 2] = v;
+    }
+    imageData.data[i + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL("image/png").split(",")[1];
+}
+
+/** Fabricates a plausible-looking PredictResult, for UI testing without a real backend/model. */
+function generateMockResult(filename: string): PredictResult {
+  const aiProb = Math.random() * 0.7 + 0.15; // keep away from exactly 0/1 for a more realistic look
+  const labelIndex: 0 | 1 = aiProb > 0.5 ? 1 : 0;
+  const label: "Real" | "AI-generated" =
+    labelIndex === 1 ? "AI-generated" : "Real";
+  const confidence = labelIndex === 1 ? aiProb : 1 - aiProb;
+
+  const raw = [Math.random(), Math.random(), Math.random()];
+  const sum = raw[0] + raw[1] + raw[2];
+  const [content, ela, prnu] = raw.map((v) => v / sum);
+
+  return {
+    filename,
+    label,
+    label_index: labelIndex,
+    confidence,
+    probabilities: { Real: 1 - aiProb, "AI-generated": aiProb },
+    attention_weights: { content, ela, prnu },
+    ela_image_base64: generateMockImageBase64(224, true),
+    prnu_residual_image_base64: generateMockImageBase64(224, false),
+    wavelet_tau: { LL: 0.052, LH: 0.048, HL: 0.05, HH: 0.049 },
+    active_branches: ["ela", "prnu", "content"],
+    checkpoint: { path: "mock (no backend)", epoch: null, seed: null },
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* SUBCOMPONENTS                                                       */
 /* ------------------------------------------------------------------ */
@@ -381,6 +437,7 @@ export default function Detector() {
   const [apiStatus, setApiStatus] = useState<"unknown" | "ok" | "down">(
     "unknown",
   );
+  const [mockMode, setMockMode] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const checkHealth = useCallback(async () => {
@@ -423,6 +480,26 @@ export default function Detector() {
       ),
     );
 
+    if (mockMode) {
+      // Fabricate results client-side, entirely for UI testing -- no
+      // backend or trained model involved.
+      await new Promise((resolve) =>
+        setTimeout(resolve, 500 + Math.random() * 500),
+      );
+      setItems((prev) =>
+        prev.map((it) =>
+          it.status === "loading"
+            ? {
+                ...it,
+                status: "done",
+                result: generateMockResult(it.file.name),
+              }
+            : it,
+        ),
+      );
+      return;
+    }
+
     const formData = new FormData();
     pending.forEach((it) => formData.append("files", it.file, it.file.name));
 
@@ -461,7 +538,7 @@ export default function Detector() {
         ),
       );
     }
-  }, [items]);
+  }, [items, mockMode]);
 
   const clearAll = useCallback(() => {
     items.forEach((it) => URL.revokeObjectURL(it.previewUrl));
@@ -505,37 +582,61 @@ export default function Detector() {
               Full Model — ELA + PRNU + Content, attention-weighted fusion
             </div>
           </div>
-          <div
-            style={{
-              ...mono,
-              fontSize: 12,
-              padding: "4px 10px",
-              borderRadius: 5,
-              color:
-                apiStatus === "ok"
-                  ? C.good
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <label
+              style={{
+                ...mono,
+                fontSize: 12,
+                color: C.textDim,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                cursor: "pointer",
+                userSelect: "none",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={mockMode}
+                onChange={(e) => setMockMode(e.target.checked)}
+              />
+              Demo mode (no backend)
+            </label>
+            <div
+              style={{
+                ...mono,
+                fontSize: 12,
+                padding: "4px 10px",
+                borderRadius: 5,
+                color: mockMode
+                  ? C.full
+                  : apiStatus === "ok"
+                    ? C.good
+                    : apiStatus === "down"
+                      ? C.danger
+                      : C.textDim,
+                background: mockMode
+                  ? `${C.full}18`
+                  : apiStatus === "ok"
+                    ? `${C.good}18`
+                    : apiStatus === "down"
+                      ? `${C.danger}18`
+                      : C.surface2,
+                border: `1px solid ${C.border}`,
+              }}
+            >
+              {mockMode
+                ? "mock mode active"
+                : apiStatus === "ok"
+                  ? "API: connected"
                   : apiStatus === "down"
-                    ? C.danger
-                    : C.textDim,
-              background:
-                apiStatus === "ok"
-                  ? `${C.good}18`
-                  : apiStatus === "down"
-                    ? `${C.danger}18`
-                    : C.surface2,
-              border: `1px solid ${C.border}`,
-            }}
-          >
-            API:{" "}
-            {apiStatus === "ok"
-              ? "connected"
-              : apiStatus === "down"
-                ? "unreachable"
-                : "checking…"}
+                    ? "API: unreachable"
+                    : "API: checking…"}
+            </div>
           </div>
         </div>
 
-        {apiStatus === "down" && (
+        {apiStatus === "down" && !mockMode && (
           <div
             style={{
               background: `${C.danger}14`,
@@ -602,19 +703,26 @@ export default function Detector() {
           <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
             <button
               onClick={analyzeAll}
-              disabled={!hasPending || apiStatus !== "ok"}
+              disabled={!hasPending || (apiStatus !== "ok" && !mockMode)}
               style={{
                 ...mono,
                 padding: "8px 18px",
                 borderRadius: 6,
                 border: "none",
                 background:
-                  hasPending && apiStatus === "ok" ? C.full : C.surface2,
-                color: hasPending && apiStatus === "ok" ? "#fff" : C.textFaint,
+                  hasPending && (apiStatus === "ok" || mockMode)
+                    ? C.full
+                    : C.surface2,
+                color:
+                  hasPending && (apiStatus === "ok" || mockMode)
+                    ? "#fff"
+                    : C.textFaint,
                 fontSize: 13,
                 fontWeight: 600,
                 cursor:
-                  hasPending && apiStatus === "ok" ? "pointer" : "not-allowed",
+                  hasPending && (apiStatus === "ok" || mockMode)
+                    ? "pointer"
+                    : "not-allowed",
               }}
             >
               Analyze{" "}
@@ -672,7 +780,10 @@ export default function Detector() {
           >
             No images yet — upload one to see the model's prediction,
             confidence, per-branch attention weights, and the extracted ELA /
-            PRNU maps.
+            PRNU maps.{" "}
+            {mockMode
+              ? ""
+              : 'Turn on "Demo mode" above to try the UI without a backend.'}
           </div>
         )}
       </div>
