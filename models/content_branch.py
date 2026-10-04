@@ -46,8 +46,32 @@ class ContentBranch(nn.Module):
         stride: int = 1,            # NOT specified in research doc
         padding: int = 1,           # NOT specified in research doc
         feature_dim: int = 128,     # "n" in the doc — NOT specified, must match other branches
+        baseline_mode: bool = False,
     ):
         super().__init__()
+        self.baseline_mode = baseline_mode
+
+        if baseline_mode:
+            # A more classical raw-content CNN baseline inspired by image-forensics
+            # detectors that train directly on RGB pixels without ELA/PRNU helpers.
+            # It uses a shallower stack with a larger first filter to mimic a simple
+            # detector backbone while keeping the branch architecture separate from the
+            # thesis' learnable multi-stream version.
+            self.blocks = nn.Sequential(
+                nn.Conv2d(in_channels, 32, kernel_size=5, stride=1, padding=2),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(2),
+                nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(2),
+                nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(2),
+            )
+            self.gap = nn.AdaptiveAvgPool2d(1)
+            self.fc = nn.Linear(128, feature_dim)
+            return
+
         assert len(block_channels) == 3, "Handoff doc specifies exactly 3 CNN blocks"
 
         channels = [in_channels] + list(block_channels)

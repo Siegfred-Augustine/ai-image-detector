@@ -1,0 +1,48 @@
+# Baseline content-only detector inspired by raw-image CNN forensic baselines.
+# This is intentionally separate from the thesis' main content branch so the
+# project can compare a classical RGB-only detector against the full multi-branch model.
+# It matches the same overall task setup as the other configs but flips the
+# content branch into a simpler baseline mode that trains directly on raw image pixels.
+
+name: content_baseline
+
+model:
+  active_branches: [content]
+  feature_dim: 64 # lower-dimensional baseline feature head, separate from the thesis branch default
+  classifier_hidden_dim: 64
+  dropout: 0.5
+  num_classes: 2
+
+branch_overrides:
+  content: { baseline_mode: true }
+
+data:
+  root: "./data/raw"
+  image_size: 224
+  val_ratio: 0.15
+  test_ratio: 0.15
+  seed: 42
+
+streams:
+  content: true
+  ela: false
+  prnu: false
+
+ela:
+  quality: 95
+  scale: 15.0
+
+augmentation:
+  random_hflip: true
+
+training:
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  batch_size: 32
+  epochs: 30
+  lr_min: 0.000001
+  optimizer_betas: [0.9, 0.999]
+  label_smoothing: 0.1
+  grad_clip_norm: 1.0
+  early_stopping_patience: 7
+  num_workers: 4
