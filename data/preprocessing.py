@@ -68,13 +68,17 @@ def index_dataset(
         class_dir = os.path.join(root_dir, dirname)
         if not os.path.isdir(class_dir):
             raise FileNotFoundError(f"Expected class folder not found: {class_dir}")
-        class_files = sorted(f for f in os.listdir(class_dir) if f.lower().endswith(VALID_EXTENSIONS))
+        class_files = sorted(
+            f for f in os.listdir(class_dir) if f.lower().endswith(VALID_EXTENSIONS)
+        )
         if max_per_class is not None and len(class_files) > max_per_class:
             class_files = rng.sample(class_files, max_per_class)
         for fname in class_files:
             samples.append(Sample(path=os.path.join(class_dir, fname), label=label))
     if not samples:
-        raise RuntimeError(f"No images found under {root_dir} ({real_dirname}/, {fake_dirname}/)")
+        raise RuntimeError(
+            f"No images found under {root_dir} ({real_dirname}/, {fake_dirname}/)"
+        )
     return samples
 
 
@@ -98,13 +102,54 @@ def stratified_split(
         n_val = int(n * val_ratio)
         n_test = int(n * test_ratio)
         val.extend(group[:n_val])
-        test.extend(group[n_val:n_val + n_test])
-        train.extend(group[n_val + n_test:])
+        test.extend(group[n_val : n_val + n_test])
+        train.extend(group[n_val + n_test :])
 
     rng.shuffle(train)
     rng.shuffle(val)
     rng.shuffle(test)
     return train, val, test
+
+
+def center_crop_or_resize(
+    pil_image: Image.Image, size: int, center_crop: bool = False
+) -> Image.Image:
+    """
+    If center_crop=True: center-crop to `size`x`size` (padding with
+    reflection first if the source is smaller than `size` in either
+    dimension), matching the baseline paper's "centered square 512x512
+    region... to avoid logos or visible watermarks" approach, which
+    explicitly avoids resizing (resizing can distort/attenuate the
+    noise signal PRNU/ELA are trying to detect).
+
+    If center_crop=False (default): resize to size x size, exactly as
+    every other config in this project does today. NOT specified in
+    the research doc as a general requirement -- this is an opt-in,
+    per-config choice (see config/prnu_only.yaml, config/ela_only.yaml).
+    """
+    if not center_crop:
+        return pil_image.resize((size, size))
+
+    w, h = pil_image.size
+    if w < size or h < size:
+        pad_w = max(0, size - w)
+        pad_h = max(0, size - h)
+        arr = np.array(pil_image)
+        arr = np.pad(
+            arr,
+            (
+                (pad_h // 2, pad_h - pad_h // 2),
+                (pad_w // 2, pad_w - pad_w // 2),
+                (0, 0),
+            ),
+            mode="reflect",
+        )
+        pil_image = Image.fromarray(arr)
+        w, h = pil_image.size
+
+    left = (w - size) // 2
+    top = (h - size) // 2
+    return pil_image.crop((left, top, left + size, top + size))
 
 
 def build_content_transform(image_size: int = 224) -> T.Compose:
@@ -120,11 +165,13 @@ def build_content_transform(image_size: int = 224) -> T.Compose:
     data/dataset.py:AIGeneratedImageDataset.__getitem__ and applied to
     the shared PIL image before any branch-specific transform runs.
     """
-    return T.Compose([
-        T.Resize((image_size, image_size)),
-        T.ToTensor(),
-        T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-    ])
+    return T.Compose(
+        [
+            T.Resize((image_size, image_size)),
+            T.ToTensor(),
+            T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+        ]
+    )
 
 
 def build_prnu_transform(image_size: int = 224) -> T.Compose:
@@ -139,10 +186,12 @@ def build_prnu_transform(image_size: int = 224) -> T.Compose:
     (models/wavelet_layer.py) needs to compute the noise residual, so
     it is intentionally skipped here (unlike build_content_transform).
     """
-    return T.Compose([
-        T.Resize((image_size, image_size)),
-        T.ToTensor(),
-    ])
+    return T.Compose(
+        [
+            T.Resize((image_size, image_size)),
+            T.ToTensor(),
+        ]
+    )
 
 
 def to_unit_tensor(arr: np.ndarray) -> torch.Tensor:

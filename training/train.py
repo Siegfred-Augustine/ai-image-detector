@@ -17,6 +17,12 @@ scheduler's minimum LR are explicitly NOT specified in the research doc
 (see config/*.yaml). CLI flags can override any of them for quick
 experimentation without editing the YAML.
 
+OPTIMIZER CHOICE: AdamW is the default for every config. `training.optimizer:
+sgdm` is an opt-in override (used ONLY by config/prnu_only.yaml and
+config/ela_only.yaml, to match a published baseline paper that trains
+with Stochastic Gradient Descent with Momentum) -- every other config
+leaves `optimizer` unset and gets AdamW exactly as before.
+
 Two entry points:
     - train_model(...): plain Python function, returns a result dict.
       This is what experiments/run_experiments.py calls directly (no
@@ -37,7 +43,7 @@ from typing import Dict, List, Optional
 import torch
 import torch.nn as nn
 import yaml
-from torch.optim import AdamW
+from torch.optim import SGD, AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from data.dataset import build_dataloaders, load_config
@@ -57,8 +63,12 @@ def resolve_device(requested: Optional[str] = None) -> torch.device:
     return torch.device("cpu")
 
 
-def _move_batch(batch: Dict[str, torch.Tensor], active_branches: List[str], device: torch.device):
-    inputs = {name: batch[name].to(device, non_blocking=True) for name in active_branches}
+def _move_batch(
+    batch: Dict[str, torch.Tensor], active_branches: List[str], device: torch.device
+):
+    inputs = {
+        name: batch[name].to(device, non_blocking=True) for name in active_branches
+    }
     labels = batch["label"].to(device, non_blocking=True)
     return inputs, labels
 
@@ -73,7 +83,9 @@ def run_inference(
     model.eval()
     y_true: List[int] = []
     y_pred: List[int] = []
-    y_prob: List[float] = []  # P(AI-generated), for optional threshold analysis / calibration
+    y_prob: List[
+        float
+    ] = []  # P(AI-generated), for optional threshold analysis / calibration
 
     for batch in dataloader:
         inputs, labels = _move_batch(batch, model.active_branches, device)
@@ -188,21 +200,46 @@ def train_model(
     run_name = run_name or f"{config_name}_seed{seed}"
 
     train_cfg = config.get("training", {})
-    epochs = epochs_override or train_cfg.get("epochs", 30)          # NOT specified in doc -- see config/*.yaml
-    lr = train_cfg.get("learning_rate", 1e-4)                        # NOT specified in doc
-    weight_decay = train_cfg.get("weight_decay", 1e-4)               # NOT specified in doc
-    lr_min = train_cfg.get("lr_min", 1e-6)                           # NOT specified in doc
-    betas = tuple(train_cfg.get("optimizer_betas", (0.9, 0.999)))    # NOT specified in doc
-    label_smoothing = train_cfg.get("label_smoothing", 0.1)          # Handoff Section 12: documented
-    grad_clip_norm = train_cfg.get("grad_clip_norm", 1.0)            # Handoff Section 12: documented
-    patience = train_cfg.get("early_stopping_patience", 7)           # NOT specified in doc
+    epochs = epochs_override or train_cfg.get(
+        "epochs", 30
+    )  # NOT specified in doc -- see config/*.yaml
+    lr = train_cfg.get("learning_rate", 1e-4)  # NOT specified in doc
+    weight_decay = train_cfg.get("weight_decay", 1e-4)  # NOT specified in doc
+    lr_min = train_cfg.get("lr_min", 1e-6)  # NOT specified in doc
+    betas = tuple(
+        train_cfg.get("optimizer_betas", (0.9, 0.999))
+    )  # NOT specified in doc
+    label_smoothing = train_cfg.get(
+        "label_smoothing", 0.1
+    )  # Handoff Section 12: documented
+    grad_clip_norm = train_cfg.get(
+        "grad_clip_norm", 1.0
+    )  # Handoff Section 12: documented
+    patience = train_cfg.get("early_stopping_patience", 7)  # NOT specified in doc
 
     device = device or resolve_device()
 
     dataloaders = build_dataloaders(config, data_root=data_root)
     model = MultiStreamModel.from_config(config).to(device)
 
-    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, betas=betas)
+    # AdamW is the default for every config. "sgdm" is an opt-in override
+    # (see config/prnu_only.yaml / config/ela_only.yaml) to match a
+    # published baseline paper's optimizer choice -- NOT specified in the
+    # research doc as a general requirement, so every other config simply
+    # doesn't set `training.optimizer` and gets AdamW exactly as before.
+    optimizer_name = train_cfg.get("optimizer", "adamw").lower()
+    if optimizer_name == "sgdm":
+        momentum = train_cfg.get(
+            "momentum", 0.9
+        )  # NOT specified -- standard SGDM default
+        optimizer = SGD(
+            model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
+        )
+    else:
+        optimizer = AdamW(
+            model.parameters(), lr=lr, weight_decay=weight_decay, betas=betas
+        )
+
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr_min)
     criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
@@ -264,8 +301,10 @@ def train_model(
 
         if epochs_since_improvement >= patience:
             if not quiet:
-                print(f"[{run_name}] early stopping at epoch {epoch} "
-                      f"(no val_f1 improvement for {patience} epochs)")
+                print(
+                    f"[{run_name}] early stopping at epoch {epoch} "
+                    f"(no val_f1 improvement for {patience} epochs)"
+                )
             break
 
     torch.save(
@@ -281,7 +320,16 @@ def train_model(
     elapsed = time.time() - start
     history_path = run_results_dir / f"history_seed{seed}.json"
     with open(history_path, "w") as f:
-        json.dump({"run_name": run_name, "seed": seed, "elapsed_seconds": elapsed, "history": history}, f, indent=2)
+        json.dump(
+            {
+                "run_name": run_name,
+                "seed": seed,
+                "elapsed_seconds": elapsed,
+                "history": history,
+            },
+            f,
+            indent=2,
+        )
 
     return {
         "run_name": run_name,
@@ -298,15 +346,35 @@ def train_model(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Train one MultiStreamModel config (Handoff Section 12).")
+    parser = argparse.ArgumentParser(
+        description="Train one MultiStreamModel config (Handoff Section 12)."
+    )
     parser.add_argument("--config", required=True, help="Path to a config/*.yaml file.")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42).")
-    parser.add_argument("--run-name", default=None, help="Override the run's checkpoint/results folder name.")
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed (default: 42)."
+    )
+    parser.add_argument(
+        "--run-name",
+        default=None,
+        help="Override the run's checkpoint/results folder name.",
+    )
     parser.add_argument("--data-root", default=None, help="Override config.data.root.")
-    parser.add_argument("--epochs", type=int, default=None, help="Override config.training.epochs.")
-    parser.add_argument("--device", default=None, help="cuda | mps | cpu (default: auto-detect).")
-    parser.add_argument("--checkpoint-root", default="checkpoints", help="Root directory for checkpoints.")
-    parser.add_argument("--results-root", default="results", help="Root directory for result/history JSON.")
+    parser.add_argument(
+        "--epochs", type=int, default=None, help="Override config.training.epochs."
+    )
+    parser.add_argument(
+        "--device", default=None, help="cuda | mps | cpu (default: auto-detect)."
+    )
+    parser.add_argument(
+        "--checkpoint-root",
+        default="checkpoints",
+        help="Root directory for checkpoints.",
+    )
+    parser.add_argument(
+        "--results-root",
+        default="results",
+        help="Root directory for result/history JSON.",
+    )
     return parser
 
 
@@ -326,7 +394,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         epochs_override=args.epochs,
     )
 
-    print(f"\nBest val F1: {summary['best_val_f1']:.4f} (epoch {summary['best_epoch']})")
+    print(
+        f"\nBest val F1: {summary['best_val_f1']:.4f} (epoch {summary['best_epoch']})"
+    )
     print(f"Checkpoint saved to: {summary['checkpoint_path']}")
 
 

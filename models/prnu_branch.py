@@ -38,6 +38,21 @@ implementation judgment call, not a documented requirement, so it's
 exposed as a toggle. Filter counts, kernel size, stride, padding, and
 the output dimension n are likewise NOT specified in the research doc.
 See Handoff Section 19, "DO NOT INVENT".
+
+CLASSICAL-BASELINE MODE (`use_hybrid_wavelet=False`)
+--------------------------------------------------------------------
+Used ONLY by config/prnu_only.yaml, to match a specific published
+baseline (Martin-Rodriguez et al., 2023, "Detection of AI-Created
+Images Using Pixel-Wise Feature Extraction and Convolutional Neural
+Networks", Sensors 23(22):9037), which computes PRNU as a classical,
+non-learnable, grayscale wavelet-domain residual (see
+data/classical_prnu.py), not this project's own learnable D4 wavelet
+layer. When `use_hybrid_wavelet=False`, this branch's input `x` is
+assumed to ALREADY BE that precomputed residual (shape (B, 1, H, W)),
+and the internal HybridWaveletLayer is skipped entirely (not even
+instantiated, so it carries no unused parameters). Every other config
+(full, no_ela, no_content, etc.) leaves `use_hybrid_wavelet` at its
+default `True` and is completely unaffected by this option's existence.
 """
 
 import torch
@@ -50,25 +65,39 @@ class PRNUBranch(nn.Module):
     def __init__(
         self,
         in_channels: int = 3,
-        conv1_channels: int = 32,     # NOT specified in research doc — implementation default
-        conv2_channels: int = 64,     # NOT specified in research doc — implementation default
-        kernel_size: int = 3,         # NOT specified in research doc — implementation default
-        stride: int = 1,              # NOT specified in research doc — implementation default
-        padding: int = 1,             # NOT specified in research doc — implementation default
-        feature_dim: int = 128,       # "n" in the doc — NOT specified, must match other branches
+        conv1_channels: int = 32,  # NOT specified in research doc — implementation default
+        conv2_channels: int = 64,  # NOT specified in research doc — implementation default
+        kernel_size: int = 3,  # NOT specified in research doc — implementation default
+        stride: int = 1,  # NOT specified in research doc — implementation default
+        padding: int = 1,  # NOT specified in research doc — implementation default
+        feature_dim: int = 128,  # "n" in the doc — NOT specified, must match other branches
         conv1_activation: bool = True,  # judgment call — doc's diagram doesn't mention one
         wavelet_init_threshold: float = 0.05,  # NOT specified — see wavelet_layer.py
+        use_hybrid_wavelet: bool = True,  # NEW: False = treat input as an already-computed
+        # residual instead of running the learnable Hybrid Wavelet Layer
+        # internally. Used ONLY by prnu_only.yaml (see class docstring);
+        # every other config leaves this at the default True, unchanged.
     ):
         super().__init__()
 
-        # Section 4: D4 DWT -> learnable soft threshold -> IDWT -> residual.
-        self.wavelet = HybridWaveletLayer(in_channels=in_channels, init_threshold=wavelet_init_threshold)
+        self.use_hybrid_wavelet = use_hybrid_wavelet
+        if use_hybrid_wavelet:
+            # Section 4: D4 DWT -> learnable soft threshold -> IDWT -> residual.
+            self.wavelet = HybridWaveletLayer(
+                in_channels=in_channels, init_threshold=wavelet_init_threshold
+            )
+        else:
+            self.wavelet = None
 
-        self.conv1 = nn.Conv2d(in_channels, conv1_channels, kernel_size, stride, padding)
+        self.conv1 = nn.Conv2d(
+            in_channels, conv1_channels, kernel_size, stride, padding
+        )
         # Intentionally NO BatchNorm here — do not add one.
         self.relu1 = nn.ReLU(inplace=True) if conv1_activation else nn.Identity()
 
-        self.conv2 = nn.Conv2d(conv1_channels, conv2_channels, kernel_size, stride, padding)
+        self.conv2 = nn.Conv2d(
+            conv1_channels, conv2_channels, kernel_size, stride, padding
+        )
         self.bn2 = nn.BatchNorm2d(conv2_channels)
         self.relu2 = nn.ReLU(inplace=True)
 
@@ -77,15 +106,22 @@ class PRNUBranch(nn.Module):
 
     def forward(self, x: torch.Tensor, return_residual: bool = False):
         """
-        x: (B, C, H, W) raw/minimally-preprocessed image tensor (NOT a
-           precomputed residual — the wavelet residual is computed here).
-        return_residual: if True, also return the wavelet residual W and
-            the learned tau values (useful for visualization/debugging).
+        x: (B, C, H, W). If use_hybrid_wavelet=True (default), this is
+           the raw/minimally-preprocessed image tensor, and the wavelet
+           residual is computed here. If use_hybrid_wavelet=False, x is
+           assumed to already BE the residual (e.g. from
+           data/classical_prnu.py), and is used as-is.
+        return_residual: if True, also return the residual W and the
+            learned tau values (tau is None in classical mode, since
+            there's no learnable threshold in that path).
         returns:
             f_prnu, shape (B, feature_dim)
             (optionally) (residual, tau) if return_residual=True
         """
-        residual, tau = self.wavelet(x)
+        if self.use_hybrid_wavelet:
+            residual, tau = self.wavelet(x)
+        else:
+            residual, tau = x, None  # x is already a precomputed residual
 
         h = self.relu1(self.conv1(residual))
         h = self.relu2(self.bn2(self.conv2(h)))

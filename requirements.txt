@@ -14,3 +14,5 @@ Pillow           # image I/O (data/preprocessing.py, data/ela.py)
 fastapi
 uvicorn[standard]
 python-multipart   # required by FastAPI to parse multipart/form-data file uploads
+
+scikit-image     # data/classical_prnu.py -- classical wavelet-domain PRNU baseline (prnu_only.yaml only)
