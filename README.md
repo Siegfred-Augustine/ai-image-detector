@@ -8,6 +8,8 @@ everything filled in / fixed to make the codebase runnable.
 
 ## 1. Setup
 
+For a complete comparison reference covering all single-branch baselines, ablations, and config definitions, see the [Word document](docs/model_baselines_and_configs.docx) or the [Markdown source](docs/model_baselines_and_configs.md).
+
 ```bash
 cd ai-image-detector-main
 pip install -r requirements.txt
