@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -10,6 +10,8 @@ import {
   Cell,
   ReferenceLine,
 } from "recharts";
+
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
 /* ------------------------------------------------------------------ */
 /* TYPES                                                              */
@@ -41,6 +43,41 @@ type ModelData = {
   confusion: ConfusionMatrix;
   pVsFull: number | null;
   mcnemarVsFull: number | null;
+};
+
+type BenchmarkMetricSummary = {
+  mean: number;
+  std: number;
+  values: number[];
+};
+
+type BenchmarkAggregate = {
+  seeds: number[];
+  n_test_images: number;
+  precision: BenchmarkMetricSummary;
+  recall: BenchmarkMetricSummary;
+  f1: BenchmarkMetricSummary;
+  accuracy: BenchmarkMetricSummary;
+  confusion_matrix_per_seed: Array<{
+    seed: number;
+    tp: number;
+    fn: number;
+    fp: number;
+    tn: number;
+    n: number;
+  }>;
+};
+
+type BenchmarkSummary = {
+  baseline: string;
+  aggregates: Record<string, BenchmarkAggregate>;
+  comparisons: Record<
+    string,
+    {
+      paired_ttests: Record<string, { p_value: number; significant: boolean }>;
+      mcnemar_primary?: { p_value: number; significant: boolean } | null;
+    }
+  >;
 };
 
 type ChipProps = {
@@ -89,6 +126,64 @@ const sans = {
 /* MOCK DATA                                                          */
 /* Temporary demo data — replace with real evaluation results later. */
 /* ------------------------------------------------------------------ */
+
+const MODEL_LABELS: Record<
+  string,
+  { name: string; sub: string; group: ModelGroup; color: string }
+> = {
+  full: {
+    name: "Full Model",
+    sub: "ELA + PRNU + Content, attention fusion",
+    group: "flagship",
+    color: C.full,
+  },
+  prnu_only: {
+    name: "PRNU-only CNN",
+    sub: "SOP 1a — wavelet residual branch alone",
+    group: "sop1",
+    color: C.ai,
+  },
+  ela_only: {
+    name: "ELA-only CNN",
+    sub: "SOP 1b — compression-artifact branch alone",
+    group: "sop1",
+    color: C.ai,
+  },
+  content_only: {
+    name: "Content-only CNN",
+    sub: "SOP 1c — structural / GAN-artifact branch alone",
+    group: "sop1",
+    color: C.ai,
+  },
+  no_prnu: {
+    name: "Full Model − PRNU",
+    sub: "SOP 2 — ELA + Content only",
+    group: "ablation",
+    color: C.danger,
+  },
+  no_ela: {
+    name: "Full Model − ELA",
+    sub: "SOP 3 — PRNU + Content only",
+    group: "ablation",
+    color: C.good,
+  },
+  no_content: {
+    name: "Full Model − Content",
+    sub: "SOP 4 — ELA + PRNU only",
+    group: "ablation",
+    color: C.danger,
+  },
+};
+
+const COMPARISON_KEYS: Record<string, string> = {
+  full: "",
+  prnu_only: "SOP 1a (Full vs PRNU-only)",
+  ela_only: "SOP 1b (Full vs ELA-only)",
+  content_only: "SOP 1c (Full vs Content-only)",
+  no_prnu: "SOP 2 (Full vs Full-without-PRNU)",
+  no_ela: "SOP 3 (Full vs Full-without-ELA)",
+  no_content: "SOP 4 (Full vs Full-without-Content)",
+};
 
 const MODEL_DATA: ModelData[] = [
   {
@@ -313,6 +408,83 @@ function fmtPVal(p: number | null | undefined): string {
   return p < 0.001 ? "p<0.001" : `p=${p.toFixed(3)}`;
 }
 
+function buildModelDataFromSummary(summary: BenchmarkSummary): ModelData[] {
+  const entries: ModelData[] = [];
+
+  for (const [modelId, aggregate] of Object.entries(summary.aggregates ?? {})) {
+    const label = MODEL_LABELS[modelId] ?? {
+      name: modelId,
+      sub: "Experiment run",
+      group: "ablation",
+      color: C.full,
+    };
+
+    const seedIndexBySeed = new Map<number, number>();
+    (aggregate.seeds ?? []).forEach((seed, index) => {
+      seedIndexBySeed.set(seed, index);
+    });
+
+    const runs = (aggregate.confusion_matrix_per_seed ?? []).map((row) => {
+      const seedIndex = seedIndexBySeed.get(row.seed) ?? 0;
+      return {
+        seed: row.seed,
+        precision:
+          aggregate.precision.values?.[seedIndex] ??
+          aggregate.precision.mean ??
+          0,
+        recall:
+          aggregate.recall.values?.[seedIndex] ?? aggregate.recall.mean ?? 0,
+        f1: aggregate.f1.values?.[seedIndex] ?? aggregate.f1.mean ?? 0,
+      };
+    });
+
+    const pooled = (aggregate.confusion_matrix_per_seed ?? []).reduce(
+      (acc, row) => ({
+        tp: acc.tp + (row.tp ?? 0),
+        fn: acc.fn + (row.fn ?? 0),
+        fp: acc.fp + (row.fp ?? 0),
+        tn: acc.tn + (row.tn ?? 0),
+      }),
+      { tp: 0, fn: 0, fp: 0, tn: 0 },
+    );
+
+    const comparisonKey = COMPARISON_KEYS[modelId];
+    const comparison = comparisonKey
+      ? summary.comparisons?.[comparisonKey]
+      : undefined;
+
+    entries.push({
+      id: modelId,
+      name: label.name,
+      sub: label.sub,
+      group: label.group,
+      color: label.color,
+      runs,
+      confusion: {
+        tp: pooled.tp,
+        fn: pooled.fn,
+        fp: pooled.fp,
+        tn: pooled.tn,
+      },
+      pVsFull: comparison?.paired_ttests?.f1?.p_value ?? null,
+      mcnemarVsFull: comparison?.mcnemar_primary?.p_value ?? null,
+    });
+  }
+
+  return entries.sort((a, b) => {
+    const order = [
+      "full",
+      "prnu_only",
+      "ela_only",
+      "content_only",
+      "no_prnu",
+      "no_ela",
+      "no_content",
+    ];
+    return order.indexOf(a.id) - order.indexOf(b.id);
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* PRIMITIVES                                                         */
 /* ------------------------------------------------------------------ */
@@ -362,24 +534,69 @@ function SigBadge({ p }: { p: number | null }) {
 
 export default function ForensicBenchmark() {
   const [activeGroup, setActiveGroup] = useState<ModelGroup>("sop1");
-
   const [inspectId, setInspectId] = useState<string>("full");
+  const [benchmarkData, setBenchmarkData] = useState<ModelData[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadBenchmarkData() {
+      try {
+        const res = await fetch(`${API_BASE}/benchmark`);
+        if (!res.ok) {
+          throw new Error("Benchmark summary not available yet");
+        }
+
+        const payload = await res.json();
+        const summary = payload.summary as BenchmarkSummary | undefined;
+
+        if (!summary || !summary.aggregates) {
+          throw new Error("Benchmark summary is empty");
+        }
+
+        if (!active) return;
+
+        const models = buildModelDataFromSummary(summary);
+        setBenchmarkData(models);
+        if (models.length > 0) {
+          setInspectId(models[0].id);
+        }
+      } catch (error) {
+        if (!active) return;
+        setBenchmarkData(MODEL_DATA);
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Benchmark data could not be loaded.",
+        );
+      }
+    }
+
+    void loadBenchmarkData();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const models = benchmarkData ?? MODEL_DATA;
 
   const visibleModels = useMemo(() => {
     if (activeGroup === "sop1") {
-      return MODEL_DATA.filter(
+      return models.filter(
         (model) => model.group === "flagship" || model.group === "sop1",
       );
     }
 
     if (activeGroup === "ablation") {
-      return MODEL_DATA.filter(
+      return models.filter(
         (model) => model.group === "flagship" || model.group === "ablation",
       );
     }
 
-    return MODEL_DATA.filter((model) => model.group === "flagship");
-  }, [activeGroup]);
+    return models.filter((model) => model.group === "flagship");
+  }, [activeGroup, models]);
 
   const chartData = visibleModels.map((model) => {
     const f1 = metricStats(model, "f1");
@@ -394,7 +611,7 @@ export default function ForensicBenchmark() {
   });
 
   const inspectModel =
-    MODEL_DATA.find((model) => model.id === inspectId) ?? MODEL_DATA[0];
+    models.find((model) => model.id === inspectId) ?? models[0];
 
   const cm = inspectModel.confusion;
 
@@ -494,13 +711,13 @@ export default function ForensicBenchmark() {
           </p>
         </div>
 
-        {/* ---------------- MOCK DATA NOTICE ---------------- */}
+        {/* ---------------- DATA STATUS ---------------- */}
 
         <div
           style={{
             background: C.surface,
             border: `1px solid ${C.borderSoft}`,
-            borderLeft: `3px solid ${C.ai}`,
+            borderLeft: `3px solid ${loadError ? C.ai : C.good}`,
             borderRadius: 6,
             padding: "12px 16px",
             marginBottom: 28,
@@ -509,23 +726,29 @@ export default function ForensicBenchmark() {
             lineHeight: 1.5,
           }}
         >
-          <strong style={{ color: C.text }}>Placeholder data.</strong> All
-          numbers below are mock values so the dashboard has something to render
-          — swap in real results by editing the{" "}
-          <code
-            style={{
-              ...mono,
-              color: C.ai,
-            }}
-          >
-            MODEL_DATA
-          </code>{" "}
-          array at the top of the file.
-          <br />
-          Several hyperparameters (patch size, branch filter counts, learning
-          rate, batch size, FC dimensions) are marked <em>not specified</em> in
-          the source spec and still need to be fixed before real runs can
-          produce these numbers.
+          {loadError ? (
+            <>
+              <strong style={{ color: C.text }}>
+                Waiting for benchmark data.
+              </strong>{" "}
+              The dashboard is showing the placeholder preview until the
+              experiment sweep writes the real summary. Run{" "}
+              <span style={{ ...mono, color: C.ai }}>
+                python -m experiments.run_experiments
+              </span>
+              and then reload the page.
+            </>
+          ) : (
+            <>
+              <strong style={{ color: C.text }}>Live benchmark data.</strong>{" "}
+              The dashboard is reading from the generated
+              <span style={{ ...mono, color: C.ai }}>
+                {" "}
+                results/summary.json
+              </span>{" "}
+              file.
+            </>
+          )}
         </div>
 
         {/* ---------------- GROUP TABS ---------------- */}
@@ -865,7 +1088,7 @@ export default function ForensicBenchmark() {
                 ...sans,
               }}
             >
-              {MODEL_DATA.map((model) => (
+              {models.map((model) => (
                 <option key={model.id} value={model.id}>
                   {model.name}
                 </option>

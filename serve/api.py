@@ -27,7 +27,9 @@ a crash on boot.
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -87,6 +89,29 @@ def health():
         }
     except HTTPException as e:
         return {"status": "not_ready", "detail": e.detail}
+
+
+@app.get("/benchmark")
+def benchmark():
+    """Serve the experiment summary JSON produced by experiments/run_experiments.py."""
+    summary_path = Path("results/summary.json")
+    if not summary_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No benchmark summary found yet. Run the experiment sweep first: "
+                "python -m experiments.run_experiments"
+            ),
+        )
+
+    with summary_path.open("r", encoding="utf-8") as f:
+        summary = json.load(f)
+
+    return {
+        "status": "ok",
+        "summary": summary,
+        "path": str(summary_path),
+    }
 
 
 @app.post("/predict")
