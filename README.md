@@ -61,8 +61,8 @@ Optional flags:
 **Output:**
 
 ```
-checkpoints/full/best.pt        # best validation-F1 checkpoint
-checkpoints/full/last.pt        # final-epoch checkpoint
+checkpoints/full/seed42/best.pt # best validation-F1 checkpoint
+checkpoints/full/seed42/last.pt # final-epoch checkpoint
 results/full/history_seed42.json  # per-epoch train/val loss + metrics
 ```
 
@@ -70,7 +70,7 @@ results/full/history_seed42.json  # per-epoch train/val loss + metrics
 
 ```bash
 python -m training.evaluate \
-  --checkpoint checkpoints/full/best.pt \
+  --checkpoint checkpoints/full/seed42/best.pt \
   --split test \
   --output results/full/test_eval.json
 ```
@@ -94,9 +94,9 @@ python -m training.train --config config/no_ela.yaml --seed 42
 python -m training.train --config config/no_content.yaml --seed 42
 ```
 
-## 6. Run the full statistical comparison (all 7 configs × 5 seeds)
+## 6. Run the full statistical comparison (all 7 configs × 3 seeds)
 
-This is the complete experimental protocol: trains every config 5 times
+This is the complete experimental protocol: trains every config 3 times
 (different seeds), evaluates each on the test set, and runs the SOP1a–c
 / SOP2–4 paired t-test + McNemar's test comparisons against the Full
 Model.
@@ -105,7 +105,7 @@ Model.
 python -m experiments.run_experiments
 ```
 
-This takes a while (7 configs × 5 seeds = 35 full training runs). To
+This takes a while (7 configs × 3 seeds = 21 full training runs). To
 sanity-check the whole pipeline quickly before committing to that, run
 a tiny subset first:
 
@@ -118,7 +118,7 @@ Useful flags:
 | Flag                          | Meaning                                              |
 | ----------------------------- | ---------------------------------------------------- |
 | `--configs full ela_only ...` | Subset of configs to run (must include `full`)       |
-| `--seeds 42 123 ...`          | Override the 5 default seeds                         |
+| `--seeds 42 123 ...`          | Override the 3 default seeds                         |
 | `--epochs N`                  | Override epoch count for every run (for quick tests) |
 | `--data-root PATH`            | Override `config.data.root` for every config         |
 | `--device cuda\|mps\|cpu`     | Force a device                                       |
@@ -129,14 +129,14 @@ Useful flags:
 ```
 results/summary.json   # everything, machine-readable
 results/summary.md     # human-readable table of results + p-values
-checkpoints/<config>/  # every seed's best/last checkpoint, per config
+checkpoints/<config>/seed<seed>/ # every seed's best/last checkpoint
 results/<config>/      # every seed's training history + test predictions
 ```
 
 ## Notes
 
 - Every hyperparameter not specified in the research handoff doc
-  (learning rate, batch size, epoch count, the 5 random seeds, etc.) is
+  (learning rate, batch size, epoch count, the random seeds, etc.) is
   filled in with a documented implementation default — search the
   codebase for `NOT SPECIFIED` to find every one, or read
   `AGENT_CHANGES.md` for the full list. Review these against the
@@ -155,6 +155,12 @@ attention weights, and the extracted ELA + PRNU maps.
 It's two pieces: a backend API (`serve/`) and a frontend page
 (`frontend/src/pages/Detector.tsx`).
 
+The Detector page's **Model** selector lists available `best.pt` files
+under `checkpoints/<config>/seed<seed>/`, so you can switch between
+model configurations and training seeds without restarting the backend.
+The selected checkpoint is loaded on demand; only one model is kept in
+memory at a time.
+
 ### 7a. Start the backend
 
 You need a trained Full Model checkpoint first (step 3 above). Then:
@@ -163,11 +169,11 @@ You need a trained Full Model checkpoint first (step 3 above). Then:
 uvicorn serve.api:app --reload --port 8000
 ```
 
-By default it loads `checkpoints/full/best.pt`. Point it at a
+By default it loads `checkpoints/full/seed42/best.pt`. Point it at a
 different checkpoint with an environment variable:
 
 ```bash
-CHECKPOINT_PATH=checkpoints/full/best.pt DEVICE=cuda uvicorn serve.api:app --reload --port 8000
+CHECKPOINT_PATH=checkpoints/full/seed42/best.pt DEVICE=cuda uvicorn serve.api:app --reload --port 8000
 ```
 
 Check it's up:

@@ -11,7 +11,7 @@ Kept separate from serve/api.py (the FastAPI wrapper) so it can be
 imported and tested directly without spinning up a server:
 
     from serve.inference import Detector
-    d = Detector("checkpoints/full/best.pt")
+    d = Detector("checkpoints/full/seed42/best.pt")
     result = d.predict(open("some_image.jpg", "rb").read())
 """
 

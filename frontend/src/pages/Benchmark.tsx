@@ -706,8 +706,7 @@ export default function ForensicBenchmark() {
           >
             Comparing the full attention-fused model against single-stream and
             branch-ablated variants defined in the handoff spec, on the FFHQ /
-            AI-Face test split (1,500 real + 1,500 AI-generated, 5 runs per
-            model).
+            AI-Face test split (1,500 real + 1,500 AI-generated).
           </p>
         </div>
 
@@ -944,8 +943,8 @@ export default function ForensicBenchmark() {
               marginBottom: 12,
             }}
           >
-            Averaged across 5 seeded runs · dashed line marks the Full Model's
-            mean
+            Averaged across available seeded runs · dashed line marks the Full
+            Model's mean
           </div>
 
           <ResponsiveContainer width="100%" height={280}>

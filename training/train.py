@@ -26,7 +26,7 @@ leaves `optimizer` unset and gets AdamW exactly as before.
 Two entry points:
     - train_model(...): plain Python function, returns a result dict.
       This is what experiments/run_experiments.py calls directly (no
-      subprocess/CLI overhead) for the 7 configs x 5 seeds sweep.
+    subprocess/CLI overhead) for the 7 configs x 3 default seeds sweep.
     - main() / CLI: `python -m training.train --config config/full.yaml --seed 42`
       for a single one-off run.
 """
@@ -178,12 +178,12 @@ def train_model(
     """
     Train one MultiStreamModel configuration end to end and return a
     summary dict. This is the function experiments/run_experiments.py
-    calls for every (config, seed) pair in the 7-configs x 5-seeds
+    calls for every (config, seed) pair in the 7-configs x multi-seed
     statistical protocol (Handoff Section 17).
 
     Layout produced:
-        checkpoint_root/<run_name>/best.pt   -- best val-F1 checkpoint
-        checkpoint_root/<run_name>/last.pt   -- final-epoch checkpoint
+        checkpoint_root/<config_name>/seed<seed>/best.pt -- best val-F1 checkpoint
+        checkpoint_root/<config_name>/seed<seed>/last.pt -- final-epoch checkpoint
         results_root/<run_name>/history.json -- per-epoch train/val curves
 
     Returns:
@@ -243,7 +243,7 @@ def train_model(
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr_min)
     criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
-    run_checkpoint_dir = checkpoint_root / config_name
+    run_checkpoint_dir = checkpoint_root / config_name / f"seed{seed}"
     run_checkpoint_dir.mkdir(parents=True, exist_ok=True)
     run_results_dir = results_root / config_name
     run_results_dir.mkdir(parents=True, exist_ok=True)

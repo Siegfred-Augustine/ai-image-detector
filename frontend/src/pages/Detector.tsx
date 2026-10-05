@@ -28,6 +28,14 @@ type PredictResult = {
   error?: string;
 };
 
+type DetectorModel = {
+  id: string;
+  name: string;
+  config: string;
+  seed: number | null;
+  checkpoint: string;
+};
+
 type UploadItem = {
   file: File;
   previewUrl: string;
@@ -372,6 +380,13 @@ function ResultCard({ item }: { item: UploadItem }) {
                 {pct(r.confidence)}
               </span>
             </div>
+            {r.checkpoint && (
+              <div style={{ fontSize: 11, color: C.textFaint, ...mono }}>
+                {r.checkpoint.seed === null
+                  ? "Configured checkpoint"
+                  : `Seed ${r.checkpoint.seed}`}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -437,6 +452,8 @@ export default function Detector() {
   const [apiStatus, setApiStatus] = useState<"unknown" | "ok" | "down">(
     "unknown",
   );
+  const [availableModels, setAvailableModels] = useState<DetectorModel[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState("");
   const [mockMode, setMockMode] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -445,8 +462,22 @@ export default function Detector() {
       const res = await fetch(`${API_BASE}/health`);
       const data = await res.json();
       setApiStatus(data.status === "ok" ? "ok" : "down");
+      const modelsRes = await fetch(`${API_BASE}/models`);
+      if (!modelsRes.ok) throw new Error("Could not load trained models");
+      const modelData: { models: DetectorModel[] } = await modelsRes.json();
+      setAvailableModels(modelData.models);
+      setSelectedModelId((current) => {
+        if (modelData.models.some((model) => model.id === current))
+          return current;
+        return (
+          modelData.models.find((model) => model.id === "full:seed42")?.id ??
+          modelData.models[0]?.id ??
+          ""
+        );
+      });
     } catch {
       setApiStatus("down");
+      setAvailableModels([]);
     }
   }, []);
 
@@ -502,6 +533,7 @@ export default function Detector() {
 
     const formData = new FormData();
     pending.forEach((it) => formData.append("files", it.file, it.file.name));
+    formData.append("model_id", selectedModelId);
 
     try {
       const res = await fetch(`${API_BASE}/predict`, {
@@ -538,7 +570,7 @@ export default function Detector() {
         ),
       );
     }
-  }, [items, mockMode]);
+  }, [items, mockMode, selectedModelId]);
 
   const clearAll = useCallback(() => {
     items.forEach((it) => URL.revokeObjectURL(it.previewUrl));
@@ -547,6 +579,9 @@ export default function Detector() {
 
   const hasPending = items.some(
     (it) => it.status === "pending" || it.status === "error",
+  );
+  const selectedModel = availableModels.find(
+    (model) => model.id === selectedModelId,
   );
 
   return (
@@ -579,10 +614,46 @@ export default function Detector() {
               AI Image Detector
             </h1>
             <div style={{ color: C.textDim, fontSize: 14, marginTop: 4 }}>
-              Full Model — ELA + PRNU + Content, attention-weighted fusion
+              {selectedModel
+                ? `${selectedModel.name}${selectedModel.seed === null ? "" : ` · seed ${selectedModel.seed}`}`
+                : "Choose an available trained checkpoint"}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <label
+              style={{
+                ...sans,
+                color: C.textDim,
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              Model
+              <select
+                value={selectedModelId}
+                onChange={(event) => setSelectedModelId(event.target.value)}
+                disabled={availableModels.length === 0 || mockMode}
+                aria-label="Select detector model and seed"
+                style={{
+                  ...mono,
+                  color: C.text,
+                  background: C.surface2,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 4,
+                  padding: "7px 9px",
+                  maxWidth: 230,
+                }}
+              >
+                {availableModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name}
+                    {model.seed === null ? "" : ` · seed ${model.seed}`}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label
               style={{
                 ...mono,

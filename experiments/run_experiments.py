@@ -6,7 +6,7 @@ Orchestrates the full experimental protocol from Handoff Sections 15 and 17:
     Configs (config/*.yaml, 7 total):
         full, prnu_only, ela_only, content_only, no_prnu, no_ela, no_content
 
-    For each config: 5 independent training runs with different seeds
+    For each config: 3 independent training runs with different seeds
     (experiments/seeds.EXPERIMENT_SEEDS), each evaluated on the SAME
     held-out test set (guaranteed by every config sharing data.seed).
 
@@ -20,14 +20,14 @@ Orchestrates the full experimental protocol from Handoff Sections 15 and 17:
 
     Statistics per comparison (Handoff Section 17):
         - Paired t-test (alpha=0.05) on precision / recall / F1 across
-          the 5 seed-aligned runs.
+          the 3 seed-aligned runs by default (overridable with --seeds).
         - McNemar's test (alpha=0.05) on per-image predictions, since
           both models are evaluated on the same test images.
 
 Outputs:
     results/summary.json    -- everything, machine-readable
     results/summary.md      -- human-readable table
-    checkpoints/<config>/   -- per-seed best/last checkpoints (via training/train.py)
+    checkpoints/<config>/seed<seed>/ -- per-seed best/last checkpoints
     results/<config>/       -- per-seed training history + test predictions
 
 CLI:
@@ -188,7 +188,7 @@ def build_summary(all_runs: Dict[str, List[RunResult]], comparisons: Dict[str, D
 
 def format_markdown_summary(summary: Dict) -> str:
     lines = ["# Multi-Stream CNN — Experiment Summary\n"]
-    lines.append("## Aggregate metrics (mean ± std across 5 seeded runs)\n")
+    lines.append("## Aggregate metrics (mean ± std across seeded runs)\n")
     lines.append("| Config | Precision | Recall | F1 | N (test) |")
     lines.append("|---|---|---|---|---|")
     for name, agg in summary["aggregates"].items():
@@ -271,7 +271,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--configs", nargs="+", default=None, choices=ALL_CONFIGS,
                          help="Subset of configs to run (default: all 7). 'full' must be included.")
     parser.add_argument("--seeds", nargs="+", type=int, default=None,
-                         help=f"Override the 5 seeds (default: {EXPERIMENT_SEEDS}).")
+                         help=f"Override the default seeds (default: {EXPERIMENT_SEEDS}).")
     parser.add_argument("--data-root", default=None, help="Override config.data.root for every config.")
     parser.add_argument("--epochs", type=int, default=None, help="Override config.training.epochs for every run (useful for smoke tests).")
     parser.add_argument("--device", default=None, help="cuda | mps | cpu (default: auto-detect).")

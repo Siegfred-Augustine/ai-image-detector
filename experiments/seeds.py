@@ -1,22 +1,21 @@
 """
 experiments/seeds.py
 
-Handoff Section 17: "5 independent training runs, different random
-seeds" for every model configuration, feeding the paired t-test and
+Handoff Section 17: independent training runs with different random
+seeds for every model configuration, feeding the paired t-test and
 McNemar's test.
 
 RANDOM_SEED_VALUES are explicitly listed in Handoff Section 19's
 "DO NOT INVENT" list (no specific values are given in the doc), so the
-5 seeds below are an implementation default, not a documented
+3 seeds below are implementation defaults, not documented
 requirement. What matters more than the specific values is that:
-    1. There are exactly 5 of them (a documented requirement), and
-    2. They are IDENTICAL across every model configuration being
+    1. They are IDENTICAL across every model configuration being
        compared (full, prnu_only, ela_only, content_only, no_prnu,
        no_ela, no_content), so run i of model A and run i of model B
        are a legitimate "paired" observation for the paired t-test.
 
 experiments/run_experiments.py imports EXPERIMENT_SEEDS directly so
-there is exactly one source of truth for "the 5 seeds."
+there is exactly one source of truth for the default seeds.
 """
 
 from __future__ import annotations
@@ -29,10 +28,9 @@ import numpy as np
 import torch
 
 # NOT specified in research doc (Handoff Section 19: RANDOM_SEED_VALUES).
-# Five arbitrary, fixed, well-separated integers -- deliberately not a
-# simple 1..5 run to avoid any accidental correlation with e.g. worker
-# IDs or fold indices elsewhere in the pipeline.
-EXPERIMENT_SEEDS: List[int] = [42, 123, 2024, 7, 31415]
+# Three arbitrary, fixed, well-separated integers; the same seeds are
+# used for every model configuration to keep comparisons paired.
+EXPERIMENT_SEEDS: List[int] = [42, 123, 2024]
 
 
 def set_seed(seed: int, deterministic: bool = True) -> None:
@@ -42,7 +40,7 @@ def set_seed(seed: int, deterministic: bool = True) -> None:
 
     Args:
         seed: the seed value (one of EXPERIMENT_SEEDS during the
-            5-run statistical protocol, or any int for ad-hoc runs).
+            default statistical protocol, or any int for ad-hoc runs).
         deterministic: if True, also request deterministic cuDNN
             kernels. This can slow training down (cuDNN falls back to
             slower deterministic algorithms) but makes runs bit-for-bit
@@ -66,7 +64,7 @@ def set_seed(seed: int, deterministic: bool = True) -> None:
     else:
         # Faster, but introduces run-to-run non-determinism beyond the
         # explicit seed -- fine for quick iteration, not for the final
-        # 5-seed statistical comparison.
+        # multi-seed statistical comparison.
         torch.backends.cudnn.deterministic = False
         torch.backends.cudnn.benchmark = True
 

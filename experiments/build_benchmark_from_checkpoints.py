@@ -99,17 +99,19 @@ def _paired_ttests_for_comparison(
     baseline_runs: Sequence[RunResult], comparison_runs: Sequence[RunResult]
 ) -> Dict[str, Dict[str, Optional[float] | bool]]:
     ttests: Dict[str, Dict[str, Optional[float] | bool]] = {}
-    if len(baseline_runs) < 2 or len(comparison_runs) < 2:
+    baseline_by_seed = {run.seed: run for run in baseline_runs}
+    comparison_by_seed = {run.seed: run for run in comparison_runs}
+    shared_seeds = sorted(baseline_by_seed.keys() & comparison_by_seed.keys())
+    if len(shared_seeds) < 2:
         for metric in METRICS_FOR_TTEST:
             ttests[metric] = {"p_value": None, "significant": False}
         return ttests
 
+    matched_baseline = [baseline_by_seed[seed] for seed in shared_seeds]
+    matched_comparison = [comparison_by_seed[seed] for seed in shared_seeds]
     for metric in METRICS_FOR_TTEST:
-        values_a = [getattr(r.metrics, metric) for r in baseline_runs]
-        values_b = [getattr(r.metrics, metric) for r in comparison_runs]
-        if len(values_a) != len(values_b):
-            ttests[metric] = {"p_value": None, "significant": False}
-            continue
+        values_a = [getattr(run.metrics, metric) for run in matched_baseline]
+        values_b = [getattr(run.metrics, metric) for run in matched_comparison]
         try:
             import numpy as np
             from scipy import stats
@@ -129,29 +131,33 @@ def _paired_ttests_for_comparison(
 
 def _mcnemar_for_comparison(
     baseline_runs: Sequence[RunResult], comparison_runs: Sequence[RunResult]
-) -> Optional[Dict[str, object]]:
-    if len(baseline_runs) != len(comparison_runs):
-        return None
+) -> Dict[str, object]:
+    baseline_by_seed = {run.seed: run for run in baseline_runs}
+    comparison_by_seed = {run.seed: run for run in comparison_runs}
+    shared_seeds = sorted(baseline_by_seed.keys() & comparison_by_seed.keys())
+    if not shared_seeds:
+        return {"per_seed": [], "primary": None}
 
-    for base_run, comp_run in zip(baseline_runs, comparison_runs):
-        if base_run.seed != comp_run.seed:
-            return None
+    from training.metrics import mcnemar_test
 
-    if not baseline_runs:
-        return None
-
-    try:
-        from training.metrics import mcnemar_test
-
-        base_run = baseline_runs[0]
-        comp_run = comparison_runs[0]
+    per_seed = []
+    for seed in shared_seeds:
+        base_run = baseline_by_seed[seed]
+        comp_run = comparison_by_seed[seed]
+        if base_run.y_true != comp_run.y_true:
+            raise ValueError(
+                f"Test labels differ for seed {seed}; models must be evaluated on the same test images."
+            )
         result = mcnemar_test(base_run.y_true, base_run.y_pred, comp_run.y_pred)
-        return {
+        per_seed.append({
+            "seed": seed,
             "p_value": float(result.p_value),
             "significant": bool(result.significant),
-        }
-    except Exception:
-        return None
+            "n01": result.n01,
+            "n10": result.n10,
+            "exact": result.exact,
+        })
+    return {"per_seed": per_seed, "primary": per_seed[0]}
 
 
 def _build_summary(all_runs: Dict[str, List[RunResult]], comparisons: Dict[str, Dict]) -> Dict:
@@ -266,10 +272,11 @@ def build_summary_from_checkpoints(
             continue
 
         paired = _paired_ttests_for_comparison(baseline_runs, comp_runs)
-        primary = _mcnemar_for_comparison(baseline_runs, comp_runs)
+        mcnemar = _mcnemar_for_comparison(baseline_runs, comp_runs)
         comparisons[sop_label] = {
             "paired_ttests": paired,
-            "mcnemar_primary": primary,
+            "mcnemar_per_seed": mcnemar["per_seed"],
+            "mcnemar_primary": mcnemar["primary"],
         }
 
     summary = _build_summary(all_runs, comparisons)

@@ -10,7 +10,7 @@ which explicitly compares models on the same test images).
 Two entry points, mirroring training/train.py:
     - evaluate_checkpoint(...): plain function returning a result dict
       (used programmatically by experiments/run_experiments.py).
-    - CLI: `python -m training.evaluate --config config/full.yaml --checkpoint checkpoints/full/best.pt`
+    - CLI: `python -m training.evaluate --config config/full.yaml --checkpoint checkpoints/full/seed42/best.pt`
 """
 
 from __future__ import annotations

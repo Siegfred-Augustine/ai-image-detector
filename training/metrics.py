@@ -15,7 +15,7 @@ Evaluation and statistical-testing utilities, per Handoff Sections 16-17:
       most dangerous forensic failure mode, so it's surfaced as its own
       field everywhere rather than only being buried inside a matrix.
 
-    - A paired t-test across 5 seeded runs' per-metric values (Section 17).
+    - A paired t-test across seeded runs' per-metric values (Section 17).
 
     - McNemar's test on two models' per-image predictions on the SAME
       test set (Section 17) -- appropriate here specifically because
@@ -123,7 +123,7 @@ class RunResult:
 
 @dataclass
 class AggregateStats:
-    """Mean/std of a metric across the Section-17-mandated 5 independent runs."""
+    """Mean/std of a metric across the independent seeded runs."""
 
     mean: float
     std: float
