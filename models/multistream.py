@@ -1,34 +1,4 @@
-"""
-MultiStreamModel — one configurable model class covering all 7 rows of
-the assigned task table:
-
-    Table row                          -> active_branches
-    ----------------------------------------------------
-    Single-stream PRNU CNN             -> ["prnu"]
-    Single-stream ELA CNN              -> ["ela"]
-    Single-Stream Content CNN          -> ["content"]
-    Proposed Multistream model         -> ["ela", "prnu", "content"]
-    ELA + Content Model with Fusion    -> ["ela", "content"]   (= "no_prnu" ablation)
-    PRNU + Content Model with Fusion   -> ["prnu", "content"]  (= "no_ela" ablation)
-    PRNU + ELA Model with Fusion       -> ["prnu", "ela"]      (= "no_content" ablation)
-
-Rather than 7 separate model files, each config file in config/*.yaml
-selects `active_branches` and this class builds the right thing:
-    - 1 active branch  -> branch feeds the classifier directly, no fusion
-    - 2 or 3 branches  -> AttentionFusion combines them before the classifier
-
-See ela_branch.py, prnu_branch.py, content_branch.py, attention.py, and
-classifier.py for what each piece does and which hyperparameters are
-implementation defaults vs. documented requirements.
-
-NOTE on the "prnu" input key: it is the RAW (minimally-preprocessed)
-image tensor, not a precomputed residual. PRNUBranch internally runs
-the learnable Hybrid Wavelet Layer (wavelet_layer.py) to derive the
-residual W = X - D on every forward pass, so gradients from the
-classification loss can flow back into the per-subband thresholds
-(Handoff Section 4 / Section 13). See prnu_branch.py's docstring.
-"""
-
+"""Build the active branch combination selected by the config."""
 from typing import Dict, Iterable, Optional
 
 import torch
@@ -42,8 +12,6 @@ from .classifier import Classifier
 
 
 class MultiStreamModel(nn.Module):
-    # Fixed canonical order so concatenation/stacking order is
-    # reproducible regardless of the order branches are listed in config.
     BRANCH_ORDER = ["ela", "prnu", "content"]
 
     _BRANCH_BUILDERS = {

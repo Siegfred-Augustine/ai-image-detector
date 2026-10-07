@@ -109,10 +109,6 @@ class AIGeneratedImageDataset(Dataset):
 
         data_cfg = config.get("data", {})
         self.image_size = data_cfg.get("image_size", 224)
-        # NOT specified in research doc -- opt-in, per-config. See
-        # data/preprocessing.py:center_crop_or_resize and
-        # config/prnu_only.yaml / config/ela_only.yaml for where this
-        # is actually turned on.
         self.center_crop = data_cfg.get("center_crop", False)
 
         stream_cfg = config.get("streams", {"content": True, "ela": True, "prnu": True})
@@ -121,27 +117,13 @@ class AIGeneratedImageDataset(Dataset):
         self.use_prnu = stream_cfg.get("prnu", True)
 
         ela_cfg = config.get("ela", {})
-        # Handoff Section 3: "JPEG recompression at 95% quality" -- this
-        # is a documented requirement, unlike most other hyperparameters.
         self.ela_quality = ela_cfg.get("quality", 95)
-        self.ela_scale = ela_cfg.get(
-            "scale", 15.0
-        )  # amplification -- NOT specified in doc
+        self.ela_scale = ela_cfg.get("scale", 15.0)
 
         prnu_cfg = config.get("prnu", {})
-        # "learnable" (default): this project's own Hybrid Wavelet Layer,
-        # computed inside models/prnu_branch.py from a raw image --
-        # unchanged behavior for every config except where explicitly
-        # overridden below.
-        # "classical": the baseline-paper-style grayscale wavelet
-        # residual (data/classical_prnu.py), used ONLY by prnu_only.yaml.
         self.prnu_mode = prnu_cfg.get("mode", "learnable")
 
         aug_cfg = config.get("augmentation", {})
-        # NOT specified in research doc (Handoff Section 19: DATA_AUGMENTATION).
-        # A simple horizontal flip is used as a mild, label-preserving
-        # default; disable via config if the team wants strictly
-        # unaugmented training (safer for forensic signals like PRNU).
         self.random_hflip = aug_cfg.get("random_hflip", True) and train
 
         self.content_transform = build_content_transform(self.image_size)
@@ -156,11 +138,7 @@ class AIGeneratedImageDataset(Dataset):
             load_image(sample.path), self.image_size, self.center_crop
         )
 
-        # Apply any geometric augmentation ONCE, to the shared source
-        # image, before branch-specific preprocessing -- so content,
-        # ela, and prnu all see the *same* geometry for a given sample.
-        # (Previously, only the content stream was flipped, which
-        # decorrelates it from ela/prnu for augmented samples.)
+        # Apply augmentation once to the shared source image so all branches see the same transform.
         if self.random_hflip and torch.rand(1).item() < 0.5:
             pil_image = pil_image.transpose(Image.FLIP_LEFT_RIGHT)
 
@@ -180,8 +158,6 @@ class AIGeneratedImageDataset(Dataset):
                 residual = extract_classical_prnu(pil_image)
                 item["prnu"] = to_unit_tensor(residual)
             else:
-                # Raw (minimally-preprocessed) image -- the wavelet
-                # residual is computed inside models/prnu_branch.py.
                 item["prnu"] = self.prnu_transform(pil_image)
 
         item["label"] = torch.tensor(sample.label, dtype=torch.long)
@@ -195,8 +171,6 @@ def build_datasets(config: dict, data_root: Optional[str] = None):
     val_ratio = data_cfg.get("val_ratio", 0.15)
     test_ratio = data_cfg.get("test_ratio", 0.15)
     seed = data_cfg.get("seed", 42)
-    # NOT specified in research doc -- optional dataset-size control.
-    # None (default) uses every image found under root/real, root/fake.
     max_samples_per_class = data_cfg.get("max_samples_per_class", None)
 
     all_samples = index_dataset(root, max_per_class=max_samples_per_class, seed=seed)

@@ -1,20 +1,4 @@
-"""
-serve/inference.py
-
-Core inference logic for the thesis's actual demo tool: load the
-trained Full Model (or any single-config checkpoint) once, then run
-predictions on uploaded images, returning not just a label but the
-analytics needed to explain it -- per-branch attention weights, the
-ELA map, and the learned PRNU wavelet-residual map.
-
-Kept separate from serve/api.py (the FastAPI wrapper) so it can be
-imported and tested directly without spinning up a server:
-
-    from serve.inference import Detector
-    d = Detector("checkpoints/full/seed42/best.pt")
-    result = d.predict(open("some_image.jpg", "rb").read())
-"""
-
+"""Load a trained checkpoint and run single-image inference."""
 from __future__ import annotations
 
 import base64
@@ -31,12 +15,11 @@ from models.multistream import MultiStreamModel
 from models.wavelet_layer import SUBBAND_ORDER
 from training.train import resolve_device
 
-# Handoff Section 1: 0 = Real, 1 = AI-generated.
 LABELS = {0: "Real", 1: "AI-generated"}
 
 
 def _array_to_png_base64(arr: np.ndarray) -> str:
-    """arr: HxWx3 float array in [0, 255] -> base64-encoded PNG string (for embedding in JSON/<img src>)."""
+    """Encode an RGB array as a PNG string for JSON transport."""
     img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -44,15 +27,7 @@ def _array_to_png_base64(arr: np.ndarray) -> str:
 
 
 def _residual_to_png_base64(residual: torch.Tensor) -> str:
-    """
-    residual: (C, H, W) wavelet residual tensor (small values centered
-    around 0 -- NOT a displayable image on its own).
-
-    Rendered as a single-channel heatmap for the UI: mean over color
-    channels, then min-max normalized to [0, 255]. This normalization
-    is purely for visualization -- the model itself consumes the raw
-    (unnormalized) residual amplitude, per Handoff Section 4/7.
-    """
+    """Convert a residual tensor to a simple grayscale heatmap for display."""
     gray = residual.mean(dim=0).detach().cpu().numpy()
     lo, hi = float(gray.min()), float(gray.max())
     if hi - lo < 1e-8:
@@ -66,11 +41,7 @@ def _residual_to_png_base64(residual: torch.Tensor) -> str:
 
 
 class Detector:
-    """
-    Loads a trained checkpoint once (expensive) and serves repeated
-    `predict()` calls (cheap) -- instantiate this a single time at
-    server startup, not per-request.
-    """
+    """Load a checkpoint once and serve repeated predictions."""
 
     def __init__(self, checkpoint_path: str, device: Optional[str] = None):
         self.device = resolve_device(device)

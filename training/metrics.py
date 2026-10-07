@@ -1,31 +1,4 @@
-"""
-training/metrics.py
-
-Evaluation and statistical-testing utilities, per Handoff Sections 16-17:
-
-    - Precision, Recall, F1, and the binary confusion matrix, with the
-      SAME orientation the doc uses (positive class = AI-generated = 1):
-
-                            Actual
-                         AI       Real
-        Pred AI          TP        FP
-        Pred Real        FN        TN
-
-      The doc explicitly flags FN (an AI image accepted as real) as the
-      most dangerous forensic failure mode, so it's surfaced as its own
-      field everywhere rather than only being buried inside a matrix.
-
-    - A paired t-test across seeded runs' per-metric values (Section 17).
-
-    - McNemar's test on two models' per-image predictions on the SAME
-      test set (Section 17) -- appropriate here specifically because
-      Section 17 also specifies that compared models are evaluated on
-      the same test images (image-level prediction agreement/disagreement).
-
-Kept dependency-light: only numpy + scipy.stats (already required for
-scikit-learn), no statsmodels dependency for McNemar's test.
-"""
-
+"""Evaluation and statistical-testing utilities."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -88,10 +61,6 @@ def compute_classification_metrics(
     recall = recall_score(y_true, y_pred, pos_label=POSITIVE_LABEL, zero_division=0)
     f1 = f1_score(y_true, y_pred, pos_label=POSITIVE_LABEL, zero_division=0)
 
-    # sklearn's confusion_matrix with labels=[1, 0] gives us the exact
-    # orientation from Handoff Section 16 directly:
-    #   row 0 = predicted AI,   row 1 = predicted Real
-    #   col 0 = actual AI,      col 1 = actual Real
     cm = sk_confusion_matrix(y_true, y_pred, labels=[1, 0])
     tp, fp = int(cm[0, 0]), int(cm[0, 1])
     fn, tn = int(cm[1, 0]), int(cm[1, 1])
@@ -265,12 +234,9 @@ def mcnemar_test(
     n_discordant = n01 + n10
 
     if n_discordant == 0:
-        # Models agree on every single prediction -- no evidence of a
-        # difference; report p = 1.0 rather than dividing by zero.
         return McNemarResult(statistic=0.0, p_value=1.0, significant=False, n01=n01, n10=n10, exact=True)
 
     if n_discordant < 25:
-        # Exact two-sided binomial test: under H0, n10 ~ Binomial(n_discordant, 0.5).
         result = stats.binomtest(min(n10, n01), n=n_discordant, p=0.5, alternative="two-sided")
         p_value = float(result.pvalue)
         statistic = float(min(n10, n01))

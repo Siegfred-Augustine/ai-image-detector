@@ -152,8 +152,6 @@ def train_one_epoch(
         loss = criterion(logits, labels)
         loss.backward()
 
-        # Handoff Section 12: gradient clipping, max_norm = 1.0, to
-        # prevent early gradient spikes in the (learnable) wavelet layer.
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_norm)
 
         optimizer.step()
@@ -202,36 +200,23 @@ def train_model(
     train_cfg = config.get("training", {})
     epochs = epochs_override or train_cfg.get(
         "epochs", 30
-    )  # NOT specified in doc -- see config/*.yaml
-    lr = train_cfg.get("learning_rate", 1e-4)  # NOT specified in doc
-    weight_decay = train_cfg.get("weight_decay", 1e-4)  # NOT specified in doc
-    lr_min = train_cfg.get("lr_min", 1e-6)  # NOT specified in doc
-    betas = tuple(
-        train_cfg.get("optimizer_betas", (0.9, 0.999))
-    )  # NOT specified in doc
-    label_smoothing = train_cfg.get(
-        "label_smoothing", 0.1
-    )  # Handoff Section 12: documented
-    grad_clip_norm = train_cfg.get(
-        "grad_clip_norm", 1.0
-    )  # Handoff Section 12: documented
-    patience = train_cfg.get("early_stopping_patience", 7)  # NOT specified in doc
+    )
+    lr = train_cfg.get("learning_rate", 1e-4)
+    weight_decay = train_cfg.get("weight_decay", 1e-4)
+    lr_min = train_cfg.get("lr_min", 1e-6)
+    betas = tuple(train_cfg.get("optimizer_betas", (0.9, 0.999)))
+    label_smoothing = train_cfg.get("label_smoothing", 0.1)
+    grad_clip_norm = train_cfg.get("grad_clip_norm", 1.0)
+    patience = train_cfg.get("early_stopping_patience", 7)
 
     device = device or resolve_device()
 
     dataloaders = build_dataloaders(config, data_root=data_root)
     model = MultiStreamModel.from_config(config).to(device)
 
-    # AdamW is the default for every config. "sgdm" is an opt-in override
-    # (see config/prnu_only.yaml / config/ela_only.yaml) to match a
-    # published baseline paper's optimizer choice -- NOT specified in the
-    # research doc as a general requirement, so every other config simply
-    # doesn't set `training.optimizer` and gets AdamW exactly as before.
     optimizer_name = train_cfg.get("optimizer", "adamw").lower()
     if optimizer_name == "sgdm":
-        momentum = train_cfg.get(
-            "momentum", 0.9
-        )  # NOT specified -- standard SGDM default
+        momentum = train_cfg.get("momentum", 0.9)
         optimizer = SGD(
             model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
         )

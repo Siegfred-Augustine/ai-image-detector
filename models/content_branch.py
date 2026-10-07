@@ -1,23 +1,4 @@
-"""
-Content Branch — learns higher-level structural/content artifacts
-(unnatural smoothness, GAN upsampling patterns, frequency anomalies).
-
-Expects a content-preprocessed image as input (no wavelet denoising
-applied — computed upstream, not part of this file's scope).
-
-Architecture (AI Handoff spec, Section 8):
-    Block1 -> Block2 -> Block3 -> GAP -> FC -> f_C
-Intentionally deeper than ELA/PRNU since it handles higher-level features.
-
-The internal structure of each block (how many conv layers, filters,
-kernel size, stride, padding, whether/how downsampling happens) is
-explicitly NOT specified in the research doc — the doc even warns not
-to assume a VGG/AlexNet-style block just because those are cited as
-inspiration. The block below (Conv-BN-ReLU-MaxPool) is a plain,
-commonly-used default, not a documented requirement. Confirm with the
-team before treating it as final. See Handoff Section 19, "DO NOT INVENT".
-"""
-
+"""Content branch for higher-level image features."""
 import torch
 import torch.nn as nn
 
@@ -40,23 +21,17 @@ class ContentBranch(nn.Module):
     def __init__(
         self,
         in_channels: int = 3,
-        # NOT specified in research doc — implementation default (progressive widening)
         block_channels: tuple = (32, 64, 128),
-        kernel_size: int = 3,       # NOT specified in research doc
-        stride: int = 1,            # NOT specified in research doc
-        padding: int = 1,           # NOT specified in research doc
-        feature_dim: int = 128,     # "n" in the doc — NOT specified, must match other branches
+        kernel_size: int = 3,
+        stride: int = 1,
+        padding: int = 1,
+        feature_dim: int = 128,
         baseline_mode: bool = False,
     ):
         super().__init__()
         self.baseline_mode = baseline_mode
 
         if baseline_mode:
-            # A more classical raw-content CNN baseline inspired by image-forensics
-            # detectors that train directly on RGB pixels without ELA/PRNU helpers.
-            # It uses a shallower stack with a larger first filter to mimic a simple
-            # detector backbone while keeping the branch architecture separate from the
-            # thesis' learnable multi-stream version.
             self.blocks = nn.Sequential(
                 nn.Conv2d(in_channels, 32, kernel_size=5, stride=1, padding=2),
                 nn.ReLU(inplace=True),

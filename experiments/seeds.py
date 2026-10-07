@@ -1,23 +1,4 @@
-"""
-experiments/seeds.py
-
-Handoff Section 17: independent training runs with different random
-seeds for every model configuration, feeding the paired t-test and
-McNemar's test.
-
-RANDOM_SEED_VALUES are explicitly listed in Handoff Section 19's
-"DO NOT INVENT" list (no specific values are given in the doc), so the
-3 seeds below are implementation defaults, not documented
-requirement. What matters more than the specific values is that:
-    1. They are IDENTICAL across every model configuration being
-       compared (full, prnu_only, ela_only, content_only, no_prnu,
-       no_ela, no_content), so run i of model A and run i of model B
-       are a legitimate "paired" observation for the paired t-test.
-
-experiments/run_experiments.py imports EXPERIMENT_SEEDS directly so
-there is exactly one source of truth for the default seeds.
-"""
-
+"""Shared seed values used for paired model comparisons."""
 from __future__ import annotations
 
 import os
@@ -27,9 +8,6 @@ from typing import List
 import numpy as np
 import torch
 
-# NOT specified in research doc (Handoff Section 19: RANDOM_SEED_VALUES).
-# Three arbitrary, fixed, well-separated integers; the same seeds are
-# used for every model configuration to keep comparisons paired.
 EXPERIMENT_SEEDS: List[int] = [42, 123, 2024]
 
 
@@ -62,9 +40,6 @@ def set_seed(seed: int, deterministic: bool = True) -> None:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
     else:
-        # Faster, but introduces run-to-run non-determinism beyond the
-        # explicit seed -- fine for quick iteration, not for the final
-        # multi-seed statistical comparison.
         torch.backends.cudnn.deterministic = False
         torch.backends.cudnn.benchmark = True
 

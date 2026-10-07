@@ -1,84 +1,11 @@
-"""
-models/wavelet_layer.py
-
-Hybrid Wavelet Layer — AI Handoff spec, Section 4.
-
-    Input X
-      |
-    D4 DWT                      (1 level -> LL, LH, HL, HH)
-      |
-    Learnable Soft Thresholding  (one tau per subband)
-      |
-    IDWT                        (reconstruct denoised image D)
-      |
-    Residual = X - D            (-> PRNU CNN Branch, models/prnu_branch.py)
-
-WHY THIS IS A MODEL FILE, NOT A data/ PREPROCESSING STEP
-----------------------------------------------------------
-Handoff Section 13 is explicit: "PyTorch is the intended primary
-framework because the Hybrid Wavelet Layer needs end-to-end gradient
-flow." The per-subband threshold tau is *learnable*, so the DWT ->
-threshold -> IDWT chain has to be a differentiable nn.Module that sits
-inside the network and gets gradients from the classification loss —
-it cannot be precomputed once, offline, with plain NumPy (that's what
-data/wavelet.py's helper functions do, and they remain useful for
-*offline visualization/analysis*, but they are NOT what feeds the PRNU
-branch during training; see the note at the top of that file).
-
-D4 FILTER
-----------------------------------------------------------
-Handoff Section 4 gives the D4 (Daubechies-4, i.e. pywt's "db2") low-pass
-decomposition coefficients explicitly:
-
-    L = [0.4830, 0.8365, 0.2241, -0.1294]
-
-The document explicitly states the corresponding **high-pass filter is
-NOT specified**. Rather than inventing arbitrary coefficients, this
-implementation derives the high-pass filter from the given low-pass
-filter using the standard orthogonal-wavelet quadrature-mirror-filter
-(QMF) relation:
-
-    g[n] = (-1)^n * h[N - 1 - n],   N = filter length
-
-This is the standard mathematical construction that makes {h, g} a
-valid perfect-reconstruction analysis pair for any given orthogonal
-low-pass filter h (Daubechies, 1992, "Ten Lectures on Wavelets", ch. 5).
-It is not a free implementation choice — it is the unique, well known
-way to complete a QMF pair from an orthogonal scaling filter — but it
-is flagged here in case the research team has a different convention
-in mind (e.g. Daubechies' own sign convention flips g's sign).
-
-DECOMPOSITION LEVEL
-----------------------------------------------------------
-The doc's diagram shows a single LL/LH/HL/HH split (no further
-decomposition of LL), so this implements exactly **1 level**, per
-Handoff Section 4 ("Wavelet decomposition level: 1 level is implied").
-
-BOUNDARY HANDLING
-----------------------------------------------------------
-The classic DWT/IDWT filter-bank achieves *exact* perfect reconstruction
-only under periodic (or carefully matched symmetric) boundary handling.
-This implementation uses reflect padding for the forward transform and
-crops the inverse transform back to the input's exact H, W. This is a
-standard engineering approximation (matches common learned-wavelet
-literature) — reconstruction is not bit-exact at the image border, but
-the whole point of this layer is to produce a *learned* forensic
-residual, not a mathematically perfect wavelet reconstruction, so this
-tradeoff is reasonable. Flag to the team if bit-exact periodic
-reconstruction is required instead.
-"""
-
+"""Differentiable 1-level D4 wavelet residual layer used by the PRNU branch."""
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# D4 / Daubechies-4 / pywt "db2" low-pass decomposition filter,
-# exactly as given in Handoff Section 4.
 D4_LOWPASS = [0.4830, 0.8365, 0.2241, -0.1294]
-
-# Subband order used consistently throughout this module and by callers.
 SUBBAND_ORDER = ("LL", "LH", "HL", "HH")
 
 
@@ -127,36 +54,20 @@ class HybridWaveletLayer(nn.Module):
         self.filter_len = low.shape[0]  # 4
         self.in_channels = in_channels
 
-        # Analysis (DWT) filters, as (1, 1, k) buffers -- fixed constants
-        # from the documented D4 filter, not learned.
         self.register_buffer("dec_lo", low.view(1, 1, -1))
         self.register_buffer("dec_hi", high.view(1, 1, -1))
-        # Synthesis (IDWT) filters. For an orthogonal wavelet the
-        # synthesis filters equal the analysis filters (conv_transpose2d
-        # performs the adjoint operation internally), so we reuse the
-        # same coefficients rather than re-deriving a separate pair.
         self.register_buffer("rec_lo", low.view(1, 1, -1))
         self.register_buffer("rec_hi", high.view(1, 1, -1))
 
-        # 4 separable 2D analysis kernels: LL, LH, HL, HH = outer(row, col)
-        # filters, matching Handoff Section 4's LL=L(x)L, LH=H(x)L,
-        # HL=L(x)H, HH=H(x)H (row filter listed first).
         self.register_buffer("k_LL", torch.outer(low, low).view(1, 1, self.filter_len, self.filter_len))
         self.register_buffer("k_LH", torch.outer(high, low).view(1, 1, self.filter_len, self.filter_len))
         self.register_buffer("k_HL", torch.outer(low, high).view(1, 1, self.filter_len, self.filter_len))
         self.register_buffer("k_HH", torch.outer(high, high).view(1, 1, self.filter_len, self.filter_len))
 
-        # One learnable threshold per subband (LL, LH, HL, HH), per
-        # Handoff Section 4: "One learnable threshold tau per subband."
-        # Stored as an unconstrained parameter and mapped through
-        # softplus in forward() so tau >= 0 is guaranteed by
-        # construction rather than by clamping (keeps gradients smooth).
-        raw_init = torch.log(torch.expm1(torch.tensor(init_threshold)))  # inverse-softplus
+        raw_init = torch.log(torch.expm1(torch.tensor(init_threshold)))
         self._raw_tau = nn.Parameter(raw_init.expand(4).clone())
 
-        # Padding so that a stride-2, kernel=filter_len conv maps
-        # H -> H // 2 exactly (see derivation in the module docstring).
-        self._fwd_pad = (self.filter_len - 2) // 2 + (self.filter_len % 2)  # = 1 for filter_len=4
+        self._fwd_pad = (self.filter_len - 2) // 2 + (self.filter_len % 2)
         self._inv_pad = self._fwd_pad
 
     @property
@@ -175,8 +86,6 @@ class HybridWaveletLayer(nn.Module):
         c = x.shape[1]
         w = kernel.expand(c, 1, -1, -1)
         out = F.conv_transpose2d(x, w, stride=2, padding=self._inv_pad, groups=c)
-        # Crop/pad to the exact original spatial size (boundary handling
-        # is approximate -- see module docstring).
         h, w_ = out_hw
         out = out[..., :h, :w_]
         if out.shape[-2] < h or out.shape[-1] < w_:

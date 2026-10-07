@@ -1,36 +1,4 @@
-"""
-scripts/prepare_class_folder.py
-
-Builds a data/raw/real/ or data/raw/fake/ folder from one or more
-source directories of downloaded images, with optional random
-subsampling to a target count. Handles:
-
-  - FFHQ (Kaggle): one flat folder of ~52,000 face images -> subsample
-    down to e.g. 2,500 for data/raw/real/.
-  - AI-Face (or any dataset split across multiple downloads/agents):
-    pass --src once per downloaded chunk -> recursively collects every
-    image found under each, pools them, then optionally subsamples the
-    pooled set down to a target count for data/raw/fake/.
-
-Usage:
-    # FFHQ -> 2500 real images
-    python scripts/prepare_class_folder.py \
-        --src /path/to/ffhq_extracted \
-        --dst data/raw/real \
-        --n 2500 --seed 42
-
-    # AI-Face, downloaded in 3 separate chunks -> matched fake count
-    python scripts/prepare_class_folder.py \
-        --src /path/to/ai_face_part1 \
-        --src /path/to/ai_face_part2 \
-        --src /path/to/ai_face_part3 \
-        --dst data/raw/fake \
-        --n 2500 --seed 42 --prefix aiface_
-
-Copies files by default (originals stay untouched). Use --symlink
-instead if you don't want to duplicate disk space (Linux/macOS only).
-"""
-
+"""Copy or symlink image folders into a class-specific dataset directory."""
 import argparse
 import random
 import shutil
