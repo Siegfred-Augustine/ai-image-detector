@@ -148,9 +148,9 @@ def aggregate_metric(runs: Sequence[RunResult], metric_name: str) -> AggregateSt
 @dataclass
 class PairedTTestResult:
     metric: str
-    t_statistic: float
+    t_statistic: float | None
     degrees_of_freedom: int
-    p_value: float
+    p_value: float | None
     significant: bool  # at alpha = 0.05, per Handoff Section 17
     mean_a: float
     mean_b: float
@@ -190,15 +190,26 @@ def paired_ttest(
     values_a = np.array([getattr(r.metrics, metric_name) for r in runs_a], dtype=np.float64)
     values_b = np.array([getattr(r.metrics, metric_name) for r in runs_b], dtype=np.float64)
 
+    if len(values_a) < 2:
+        return PairedTTestResult(
+            metric=metric_name,
+            t_statistic=None,
+            degrees_of_freedom=max(0, len(values_a) - 1),
+            p_value=None,
+            significant=False,
+            mean_a=float(values_a.mean()) if len(values_a) else float("nan"),
+            mean_b=float(values_b.mean()) if len(values_b) else float("nan"),
+        )
+
     t_stat, p_value = stats.ttest_rel(values_a, values_b)
     dof = len(values_a) - 1
 
     return PairedTTestResult(
         metric=metric_name,
-        t_statistic=float(t_stat),
+        t_statistic=float(t_stat) if np.isfinite(t_stat) else None,
         degrees_of_freedom=dof,
-        p_value=float(p_value),
-        significant=bool(p_value < alpha),
+        p_value=float(p_value) if np.isfinite(p_value) else None,
+        significant=bool(p_value < alpha) if np.isfinite(p_value) else False,
         mean_a=float(values_a.mean()),
         mean_b=float(values_b.mean()),
     )

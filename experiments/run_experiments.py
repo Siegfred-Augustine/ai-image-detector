@@ -1,40 +1,4 @@
-"""
-experiments/run_experiments.py
-
-Orchestrates the full experimental protocol from Handoff Sections 15 and 17:
-
-    Configs (config/*.yaml, 7 total):
-        full, prnu_only, ela_only, content_only, no_prnu, no_ela, no_content
-
-    For each config: 3 independent training runs with different seeds
-    (experiments/seeds.EXPERIMENT_SEEDS), each evaluated on the SAME
-    held-out test set (guaranteed by every config sharing data.seed).
-
-    Comparisons against the Full Model:
-        SOP 1a: Full vs PRNU-only
-        SOP 1b: Full vs ELA-only
-        SOP 1c: Full vs Content-only
-        SOP 2:  Full vs Full-without-PRNU   (no_prnu.yaml = ELA+Content)
-        SOP 3:  Full vs Full-without-ELA    (no_ela.yaml  = PRNU+Content)
-        SOP 4:  Full vs Full-without-Content(no_content.yaml = PRNU+ELA)
-
-    Statistics per comparison (Handoff Section 17):
-        - Paired t-test (alpha=0.05) on precision / recall / F1 across
-          the 3 seed-aligned runs by default (overridable with --seeds).
-        - McNemar's test (alpha=0.05) on per-image predictions, since
-          both models are evaluated on the same test images.
-
-Outputs:
-    results/summary.json    -- everything, machine-readable
-    results/summary.md      -- human-readable table
-    checkpoints/<config>/seed<seed>/ -- per-seed best/last checkpoints
-    results/<config>/       -- per-seed training history + test predictions
-
-CLI:
-    python -m experiments.run_experiments
-    python -m experiments.run_experiments --configs full ela_only --epochs 1 --seeds 42
-        (useful for a fast smoke test before committing to the full sweep)
-"""
+"""Run the configured experiment sweep and compare each model to the full baseline."""
 
 from __future__ import annotations
 
@@ -58,12 +22,10 @@ from training.train import resolve_device, train_model
 
 CONFIG_DIR_DEFAULT = Path("config")
 
-# All 7 configs required by Handoff Section 15's task table.
 ALL_CONFIGS = ["full", "prnu_only", "ela_only", "content_only", "no_prnu", "no_ela", "no_content"]
 
 BASELINE_CONFIG = "full"
 
-# Handoff Section 15: SOP label -> config compared against the Full Model.
 SOP_COMPARISONS: Dict[str, str] = {
     "SOP 1a (Full vs PRNU-only)": "prnu_only",
     "SOP 1b (Full vs ELA-only)": "ela_only",
@@ -74,6 +36,46 @@ SOP_COMPARISONS: Dict[str, str] = {
 }
 
 METRICS_FOR_TTEST = ("precision", "recall", "f1")
+DATA_SPLIT_KEYS = ("root", "max_samples_per_class", "seed", "val_ratio", "test_ratio")
+
+
+def validate_shared_data_split(
+    config_dir: Path, configs: List[str], data_root: Optional[str]
+) -> None:
+    """Fail before training if compared configs would construct different dataset splits."""
+    split_settings = {}
+    defaults = {
+        "root": "./data/raw",
+        "max_samples_per_class": None,
+        "seed": 42,
+        "val_ratio": 0.15,
+        "test_ratio": 0.15,
+    }
+    for name in configs:
+        config = load_config(str(config_dir / f"{name}.yaml"))
+        data_config = config.get("data", {})
+        split_settings[name] = {
+            key: data_root if key == "root" and data_root is not None else data_config.get(key, defaults[key])
+            for key in DATA_SPLIT_KEYS
+        }
+
+    reference_name = configs[0]
+    reference = split_settings[reference_name]
+    mismatches = {
+        name: {
+            key: settings[key]
+            for key in DATA_SPLIT_KEYS
+            if settings[key] != reference[key]
+        }
+        for name, settings in split_settings.items()
+        if any(settings[key] != reference[key] for key in DATA_SPLIT_KEYS)
+    }
+    if mismatches:
+        raise ValueError(
+            "Experiment configs must share the same dataset split settings "
+            f"({', '.join(DATA_SPLIT_KEYS)}). Reference '{reference_name}': {reference}; "
+            f"mismatches: {mismatches}"
+        )
 
 
 def run_single_config(
@@ -118,8 +120,6 @@ def run_single_config(
             save_path=eval_save_path,
         )
 
-        # Rebuild a ClassificationMetrics from the already-computed dict
-        # (evaluate_checkpoint recomputes internally; reuse its metrics).
         from training.metrics import compute_classification_metrics
         metrics = compute_classification_metrics(eval_result["y_true"], eval_result["y_pred"])
 
@@ -129,18 +129,7 @@ def run_single_config(
 
 
 def compare_to_baseline(baseline_runs: List[RunResult], comparison_runs: List[RunResult]) -> Dict:
-    """
-    Paired t-tests (per metric) + McNemar's test, per Handoff Section 17.
-
-    McNemar's test is run once per seed-aligned run pair (5 tests, since
-    each seed produces a different trained model and therefore different
-    per-image predictions, even though the test IMAGES are identical
-    across seeds/configs). Which single run's McNemar result should be
-    treated as authoritative is NOT specified in the research doc, so
-    all 5 are reported plus a "primary" one (the first seed) is
-    highlighted as the headline number -- an implementation choice,
-    flagged here rather than silently picked.
-    """
+    """Compare the baseline and candidate runs with paired t-tests and McNemar tests."""
     ttests = {
         metric: paired_ttest(baseline_runs, comparison_runs, metric).__dict__
         for metric in METRICS_FOR_TTEST
@@ -149,12 +138,9 @@ def compare_to_baseline(baseline_runs: List[RunResult], comparison_runs: List[Ru
     mcnemar_per_seed = []
     for base_run, comp_run in zip(baseline_runs, comparison_runs):
         assert base_run.seed == comp_run.seed
-        # Both runs were evaluated on the same config.data.seed-derived
-        # test split, so y_true should match exactly; assert that rather
-        # than silently comparing misaligned predictions.
         assert base_run.y_true == comp_run.y_true, (
-            "Baseline and comparison runs disagree on the test set's ground truth -- "
-            "check that both configs share the same data.root/seed/val_ratio/test_ratio."
+            "Baseline and comparison runs disagree on test labels. Check that both configs "
+            "use the same data.root, max_samples_per_class, data.seed, val_ratio and test_ratio."
         )
         result = mcnemar_test(base_run.y_true, base_run.y_pred, comp_run.y_pred)
         mcnemar_per_seed.append({"seed": base_run.seed, **result.__dict__})
@@ -206,8 +192,10 @@ def format_markdown_summary(summary: Dict) -> str:
         mcnemar_p_str = f"{primary['p_value']:.4g}" if primary else "n/a"
         mcnemar_sig_str = str(primary["significant"]) if primary else "n/a"
         for metric, tres in result["paired_ttests"].items():
+            ttest_p = tres["p_value"]
+            ttest_p_str = f"{ttest_p:.4g}" if ttest_p is not None else "n/a"
             lines.append(
-                f"| {sop_label} | {metric} | {tres['p_value']:.4g} | {tres['significant']} "
+                f"| {sop_label} | {metric} | {ttest_p_str} | {tres['significant']} "
                 f"| {mcnemar_p_str} | {mcnemar_sig_str} |"
             )
     return "\n".join(lines)
@@ -234,6 +222,7 @@ def run_all_experiments(
             f"'{BASELINE_CONFIG}' (the Full Model) must be included in `configs` -- "
             "every SOP comparison is measured against it."
         )
+    validate_shared_data_split(config_dir, configs, data_root)
 
     all_runs: Dict[str, List[RunResult]] = {}
     for name in configs:
@@ -246,7 +235,7 @@ def run_all_experiments(
     comparisons = {}
     for sop_label, comparison_name in SOP_COMPARISONS.items():
         if comparison_name not in all_runs:
-            continue  # comparison config wasn't included in this run (e.g. a partial/subset sweep)
+            continue
         comparisons[sop_label] = compare_to_baseline(all_runs[BASELINE_CONFIG], all_runs[comparison_name])
 
     summary = build_summary(all_runs, comparisons)
