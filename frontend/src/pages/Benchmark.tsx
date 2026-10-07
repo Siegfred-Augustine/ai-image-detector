@@ -697,6 +697,7 @@ export default function ForensicBenchmark() {
 
           <p
             style={{
+              textAlign: "center",
               color: C.textDim,
               marginTop: 8,
               maxWidth: 620,
@@ -706,7 +707,7 @@ export default function ForensicBenchmark() {
           >
             Comparing the full attention-fused model against single-stream and
             branch-ablated variants defined in the handoff spec, on the FFHQ /
-            AI-Face test split (1,500 real + 1,500 AI-generated).
+            AI-Face test split (2,500 real + 2,500 AI-generated).
           </p>
         </div>
 
