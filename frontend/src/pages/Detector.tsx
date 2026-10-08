@@ -20,6 +20,7 @@ type PredictResult = {
   confidence?: number;
   probabilities?: { Real: number; "AI-generated": number };
   attention_weights?: Record<string, number> | null;
+  branch_attributions?: Record<string, string>;
   ela_image_base64?: string | null;
   prnu_residual_image_base64?: string | null;
   wavelet_tau?: Record<string, number> | null;
@@ -76,6 +77,12 @@ const BRANCH_COLORS: Record<string, string> = {
   content: C.full,
   ela: C.ai,
   prnu: C.real,
+};
+
+const BRANCH_EXPLANATIONS: Record<string, string> = {
+  content: "RGB image structure and texture",
+  ela: "JPEG recompression differences",
+  prnu: "Wavelet-domain sensor-noise residuals",
 };
 
 /* ------------------------------------------------------------------ */
@@ -438,6 +445,63 @@ function ResultCard({ item }: { item: UploadItem }) {
           caption="Learned wavelet noise residual — texture the model's PRNU branch is keying on."
         />
       </div>
+
+      <section
+        style={{
+          gridColumn: "1 / -1",
+          borderTop: `1px solid ${C.borderSoft}`,
+          paddingTop: 16,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 12,
+            color: C.textDim,
+            ...mono,
+            textTransform: "uppercase",
+            marginBottom: 6,
+          }}
+        >
+          Branch attribution · Grad-CAM
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            color: C.textFaint,
+            lineHeight: 1.5,
+            marginBottom: 12,
+            ...sans,
+          }}
+        >
+          Brighter areas indicate spatial features with positive gradient
+          attribution to this prediction. These are approximate visual cues, not
+          proof of causation. This detector does not use EXIF or other file
+          metadata.
+        </div>
+        {r?.branch_attributions &&
+        Object.keys(r.branch_attributions).length > 0 ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: 12,
+            }}
+          >
+            {Object.entries(r.branch_attributions).map(([branch, image]) => (
+              <StreamImage
+                key={branch}
+                title={`${BRANCH_LABELS[branch] ?? branch} attribution`}
+                base64={image}
+                caption={`Regions supporting the selected class · ${BRANCH_EXPLANATIONS[branch] ?? "branch input features"}.`}
+              />
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: C.textFaint, ...sans }}>
+            Attribution maps are unavailable in demo mode or for this result.
+          </div>
+        )}
+      </section>
     </div>
   );
 }

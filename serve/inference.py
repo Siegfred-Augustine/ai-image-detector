@@ -7,6 +7,7 @@ from typing import Dict, Optional
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from data.ela import compute_ela_image
@@ -40,6 +41,33 @@ def _residual_to_png_base64(residual: torch.Tensor) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def _gradcam_overlay_to_png_base64(
+    activation: torch.Tensor, gradient: torch.Tensor, image: Image.Image
+) -> str:
+    """Encode a Grad-CAM map over the resized source image as a PNG string."""
+    weights = gradient.mean(dim=(2, 3), keepdim=True)
+    cam = torch.relu((weights * activation).sum(dim=1, keepdim=True))
+    cam = F.interpolate(cam, size=(image.height, image.width), mode="bilinear", align_corners=False)[0, 0]
+    cam = cam.detach().cpu().numpy()
+    cam_min, cam_max = float(cam.min()), float(cam.max())
+    if cam_max - cam_min > 1e-8:
+        cam = (cam - cam_min) / (cam_max - cam_min)
+    else:
+        cam = np.zeros_like(cam)
+
+    heat = np.stack(
+        (
+            np.clip(1.5 * cam, 0, 1),
+            np.clip(1.5 - np.abs(4 * cam - 3), 0, 1),
+            np.clip(1.5 - 4 * cam, 0, 1),
+        ),
+        axis=-1,
+    )
+    source = np.asarray(image, dtype=np.float32) / 255.0
+    overlay = source * (1.0 - 0.48 * cam[..., None]) + heat * (0.48 * cam[..., None])
+    return _array_to_png_base64(overlay * 255.0)
+
+
 class Detector:
     """Load a checkpoint once and serve repeated predictions."""
 
@@ -67,7 +95,6 @@ class Detector:
         self.checkpoint_epoch = ckpt.get("epoch")
         self.checkpoint_seed = ckpt.get("seed")
 
-    @torch.no_grad()
     def predict(self, image_bytes: bytes) -> Dict:
         """
         Args:
@@ -80,6 +107,7 @@ class Detector:
               "confidence": float,                 # P(predicted label)
               "probabilities": {"Real": p0, "AI-generated": p1},
               "attention_weights": {branch: weight, ...} | None,
+              "branch_attributions": {branch: "..."},
               "ela_image_base64": "..." | None,     # PNG, base64
               "prnu_residual_image_base64": "..." | None,   # PNG, base64
               "wavelet_tau": {"LL": t, "LH": t, "HL": t, "HH": t} | None,
@@ -103,10 +131,41 @@ class Detector:
         if "prnu" in self.active_branches:
             inputs["prnu"] = self.prnu_transform(pil_image).unsqueeze(0).to(self.device)
 
-        logits, attn = self.model(inputs)
-        probs = torch.softmax(logits, dim=1)[0]
-        pred_idx = int(probs.argmax().item())
-        confidence = float(probs[pred_idx].item())
+        target_layers = {}
+        if "content" in self.active_branches:
+            target_layers["content"] = self.model.branches["content"].blocks
+        if "ela" in self.active_branches:
+            target_layers["ela"] = self.model.branches["ela"].relu2
+        if "prnu" in self.active_branches:
+            target_layers["prnu"] = self.model.branches["prnu"].relu2
+        activations = {}
+        handles = []
+        for branch in self.active_branches:
+            def capture_activation(_module, _inputs, output, branch_name=branch):
+                activations[branch_name] = output
+
+            handles.append(target_layers[branch].register_forward_hook(capture_activation))
+
+        try:
+            with torch.enable_grad():
+                logits, attn = self.model(inputs)
+                probs = torch.softmax(logits, dim=1)[0]
+                pred_idx = int(probs.argmax().item())
+                gradients = torch.autograd.grad(
+                    logits[0, pred_idx],
+                    tuple(activations[branch] for branch in self.active_branches),
+                )
+                branch_attributions = {
+                    branch: _gradcam_overlay_to_png_base64(
+                        activations[branch], gradient, pil_image
+                    )
+                    for branch, gradient in zip(self.active_branches, gradients)
+                }
+        finally:
+            for handle in handles:
+                handle.remove()
+
+        confidence = float(probs[pred_idx].detach().item())
 
         attention_weights = None
         if attn is not None:
@@ -128,6 +187,7 @@ class Detector:
             "confidence": confidence,
             "probabilities": {LABELS[0]: float(probs[0].item()), LABELS[1]: float(probs[1].item())},
             "attention_weights": attention_weights,
+            "branch_attributions": branch_attributions,
             "ela_image_base64": ela_b64,
             "prnu_residual_image_base64": prnu_b64,
             "wavelet_tau": tau_dict,

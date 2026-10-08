@@ -22,6 +22,11 @@ type RunResult = {
   precision: number;
   recall: number;
   f1: number;
+  accuracy?: number;
+  tp?: number;
+  tn?: number;
+  fp?: number;
+  fn?: number;
 };
 
 type ConfusionMatrix = {
@@ -60,6 +65,10 @@ type BenchmarkAggregate = {
   accuracy: BenchmarkMetricSummary;
   confusion_matrix_per_seed: Array<{
     seed: number;
+    precision?: number;
+    recall?: number;
+    f1?: number;
+    accuracy?: number;
     tp: number;
     fn: number;
     fp: number;
@@ -419,24 +428,30 @@ function buildModelDataFromSummary(summary: BenchmarkSummary): ModelData[] {
       color: C.full,
     };
 
-    const seedIndexBySeed = new Map<number, number>();
-    (aggregate.seeds ?? []).forEach((seed, index) => {
-      seedIndexBySeed.set(seed, index);
-    });
-
-    const runs = (aggregate.confusion_matrix_per_seed ?? []).map((row) => {
-      const seedIndex = seedIndexBySeed.get(row.seed) ?? 0;
-      return {
+    const runs = (aggregate.confusion_matrix_per_seed ?? []).map(
+      (row, index) => ({
         seed: row.seed,
         precision:
-          aggregate.precision.values?.[seedIndex] ??
+          row.precision ??
+          aggregate.precision.values?.[index] ??
           aggregate.precision.mean ??
           0,
         recall:
-          aggregate.recall.values?.[seedIndex] ?? aggregate.recall.mean ?? 0,
-        f1: aggregate.f1.values?.[seedIndex] ?? aggregate.f1.mean ?? 0,
-      };
-    });
+          row.recall ??
+          aggregate.recall.values?.[index] ??
+          aggregate.recall.mean ??
+          0,
+        f1: row.f1 ?? aggregate.f1.values?.[index] ?? aggregate.f1.mean ?? 0,
+        accuracy:
+          row.accuracy ??
+          aggregate.accuracy.values?.[index] ??
+          aggregate.accuracy.mean,
+        tp: row.tp,
+        tn: row.tn,
+        fp: row.fp,
+        fn: row.fn,
+      }),
+    );
 
     const pooled = (aggregate.confusion_matrix_per_seed ?? []).reduce(
       (acc, row) => ({
@@ -671,7 +686,7 @@ export default function ForensicBenchmark() {
       >
         {/* ---------------- HEADER ---------------- */}
 
-        <div style={{ marginBottom: 28 }}>
+        <div style={{ marginBottom: 28, textAlign: "center" }}>
           <div
             style={{
               ...mono,
@@ -679,6 +694,8 @@ export default function ForensicBenchmark() {
               color: C.textFaint,
               marginBottom: 8,
               letterSpacing: "0.02em",
+              display: "flex",
+              justifyContent: "center",
             }}
           >
             AI-FACE FORENSICS · MODEL COMPARISON
@@ -700,7 +717,7 @@ export default function ForensicBenchmark() {
               textAlign: "center",
               color: C.textDim,
               marginTop: 8,
-              maxWidth: 620,
+              maxWidth: "full",
               lineHeight: 1.55,
               fontSize: 14,
             }}
@@ -915,6 +932,81 @@ export default function ForensicBenchmark() {
             </tbody>
           </table>
         </div>
+
+        {/* ---------------- PER-SEED METRICS ---------------- */}
+
+        <section style={{ marginBottom: 32 }}>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>
+              Per-seed metrics
+            </div>
+            <div style={{ fontSize: 12, color: C.textFaint, marginTop: 4 }}>
+              Individual evaluation results for every model in this benchmark
+              group. Repeated seed numbers are shown as separate runs.
+            </div>
+          </div>
+
+          <div className="scroll-x">
+            <table style={{ fontSize: 12.5, minWidth: 920 }}>
+              <thead>
+                <tr
+                  style={{
+                    borderBottom: `1px solid ${C.border}`,
+                    color: C.textFaint,
+                    ...mono,
+                    fontSize: 10.5,
+                  }}
+                >
+                  <th>MODEL</th>
+                  <th>SEED / RUN</th>
+                  <th>PRECISION</th>
+                  <th>RECALL</th>
+                  <th>F1</th>
+                  <th>ACCURACY</th>
+                  <th>TP</th>
+                  <th>TN</th>
+                  <th>FP</th>
+                  <th>FN</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleModels.flatMap((model) =>
+                  model.runs.map((run, index) => (
+                    <tr
+                      key={`${model.id}-${run.seed}-${index}`}
+                      onClick={() => setInspectId(model.id)}
+                      style={{
+                        borderBottom: `1px solid ${C.borderSoft}`,
+                        cursor: "pointer",
+                        background:
+                          inspectId === model.id
+                            ? `${C.surface2}88`
+                            : "transparent",
+                      }}
+                    >
+                      <td style={{ color: C.text }}>{model.name}</td>
+                      <td style={mono}>
+                        {run.seed} / {index + 1}
+                      </td>
+                      <td style={mono}>{fmtPct(run.precision)}</td>
+                      <td style={mono}>{fmtPct(run.recall)}</td>
+                      <td style={mono}>{fmtPct(run.f1)}</td>
+                      <td style={mono}>
+                        {run.accuracy === undefined
+                          ? "—"
+                          : fmtPct(run.accuracy)}
+                      </td>
+                      <td style={mono}>{run.tp?.toLocaleString() ?? "—"}</td>
+                      <td style={mono}>{run.tn?.toLocaleString() ?? "—"}</td>
+                      <td style={mono}>{run.fp?.toLocaleString() ?? "—"}</td>
+                      <td style={mono}>{run.fn?.toLocaleString() ?? "—"}</td>
+                    </tr>
+                  )),
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
         {/* ---------------- F1 CHART ---------------- */}
 
